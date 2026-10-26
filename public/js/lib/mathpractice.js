@@ -229,25 +229,50 @@ export class MathPracticeClient {
  *   limit 이상이면 overLimit 에 담는다.
  * - dayCache({load(classCode)→{날짜:[번호…]}, save(classCode, {날짜:[번호…]})}) 를 주면 지난 날짜의
  *   '한 학생' 목록을 저장해 두고 다시 조회하지 않는다 (분수 연산 마스터의 무료 읽기 한도 절약).
+ * - baseCache({load(classCode)→base|null, save(classCode, base)}) 를 주면 오늘 한 번 받은
+ *   반 정보·명단·L27 통과·이전 등교일 기록을 오늘 하루 동안 다시 쓴다. 이전 등교일은 이미 끝난 날이라
+ *   하루 안에 결과가 바뀌지 않는다. refresh 면 무시하고 새로 받는다 (새로고침 버튼).
  */
 export async function buildReport({
   classCode, offDays = [], roster = [], excludeNames = [], now = new Date(), fetchImpl, base,
   countStart = DEFAULT_COUNT_START, limit = DEFAULT_LIMIT, cleared = {}, dayCache = null,
+  baseCache = null, refresh = false,
 } = {}) {
   if (!classCode) throw new MathError('nocode', '우리 반 탭에서 수학 반 코드를 먼저 적어 주세요', 400);
   const client = new MathPracticeClient(classCode, { fetchImpl, base });
-  const cls = await client.fetchClass();
   const today = todayKST(now);
+
+  // 오늘 이미 받아 둔 것이 있으면 분수 연산 마스터를 부르지 않는다
+  let saved = null;
+  if (baseCache && !refresh) {
+    saved = await baseCache.load(client.code).catch(() => null);
+    if (saved?.date !== today) saved = null;
+  }
+  let cls, students, finalPassed;
+  if (saved) {
+    ({ cls, students } = saved);
+    finalPassed = new Set(saved.finalPassed);
+  } else {
+    [cls, students, finalPassed] = await Promise.all([
+      client.fetchClass(), client.fetchStudents(), client.fetchFinalPassed(),
+    ]);
+  }
   const cal = new SchoolCalendar([...offDays, ...cls.offDays]);
   const prev = cal.prevSchoolDay(today);
   if (!prev) throw new MathError('http', '이전 등교일을 찾을 수 없어요');
 
-  const [students, withRecord, accessed, finalPassed] = await Promise.all([
-    client.fetchStudents(),
-    client.fetchDone(prev),
-    client.fetchAccessed(prev),
-    client.fetchFinalPassed(),
-  ]);
+  let withRecord, accessed;
+  if (saved && saved.prev === prev) {
+    withRecord = new Set(saved.withRecord);
+    accessed = new Set(saved.accessed);
+  } else {
+    [withRecord, accessed] = await Promise.all([client.fetchDone(prev), client.fetchAccessed(prev)]);
+  }
+  if (baseCache && !(saved && saved.prev === prev)) {
+    await baseCache.save(client.code, {
+      date: today, cls, students, finalPassed: [...finalPassed], prev, withRecord: [...withRecord], accessed: [...accessed],
+    }).catch(() => {});
+  }
   const done = new Set([...withRecord, ...accessed]);
   const nameByNo = new Map(roster.map((s) => [String(s.no), s.name]));
   const excludeSet = new Set(excludeNames.map((n) => String(n).trim()).filter(Boolean));

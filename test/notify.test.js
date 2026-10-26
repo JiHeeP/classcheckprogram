@@ -57,7 +57,7 @@ function world({ refreshResponse, kakaoFail, db } = {}) {
     }
     return json({ error: `예상 못 한 주소 ${url}` }, 500);
   };
-  return { fetchImpl, store, sent, refreshCalls };
+  return { fetchImpl, store, sent, refreshCalls, math };
 }
 
 const ENV = { KAKAO_REST_API_KEY: 'KEY', KAKAO_CLIENT_SECRET: 'SECRET', KAKAO_REFRESH_TOKEN: 'REFRESH-1', SITE_URL: 'https://class.example.app' };
@@ -203,6 +203,18 @@ test('해제한 학생은 그날까지의 횟수가 빠짐', async () => {
   const FRI = new Date('2026-10-15T23:30:00Z');
   const r = await runNotify({ config: CONFIG, env: {}, dryRun: true, now: FRI, fetchImpl: w.fetchImpl });
   assert.doesNotMatch(r.text, /누적/, '10/14, 10/15 두 번뿐이라 기준(3) 미만');
+});
+
+test('같은 날 두 번째 실행은 저장해 둔 자료를 써서 분수 연산 마스터를 안 부름', async () => {
+  const w = world();
+  await runNotify({ config: CONFIG, env: {}, dryRun: true, now: MONDAY, fetchImpl: w.fetchImpl });
+  assert.equal(w.store.has('rooms/main/cache/mathBase'), false, '연습 실행은 저장하지 않음');
+  const first = await runNotify({ config: CONFIG, env: ENV, now: MONDAY, fetchImpl: w.fetchImpl });
+  assert.ok(w.store.has('rooms/main/cache/mathBase'));
+  const before = w.math.calls.length;
+  const second = await runNotify({ config: CONFIG, env: ENV, now: MONDAY, fetchImpl: w.fetchImpl });
+  assert.equal(w.math.calls.length, before);
+  assert.equal(second.text, first.text);
 });
 
 function WEEK_DAYS_ALL() {

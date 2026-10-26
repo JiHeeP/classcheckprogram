@@ -158,7 +158,7 @@ test('수학: 결과를 room 캐시에 남기고, 실패하면 마지막 결과�
   assert.equal(ok.calls.length, 5); // 반 + 명단 + 그날 기록 + 접속 기록 + L27 기록. 두 번째는 캐시라 호출 없음
 
   const later = new Date(at.getTime() + 11 * 60 * 1000);
-  const r3 = await store.getMath(room, { fetchImpl: fakeFirestoreFetch({}, { status: 429 }), base, at: later });
+  const r3 = await store.getMath(room, { fetchImpl: fakeFirestoreFetch({}, { status: 429 }), base, at: later, refresh: true });
   assert.equal(r3.stale, true);
   assert.equal(r3.error.code, 'quota');
 
@@ -212,7 +212,7 @@ test('누적: 설정 검증 → 계산 → 해제하면 0부터 → 지난 날�
   const r2 = await store.getMath(room, { fetchImpl: second, base, at });
   assert.equal(r2.counts['3'], 0);
   assert.deepEqual(r2.overLimit.map((s) => s.no), ['5'], '해제한 학생만 빠지고 다른 학생은 그대로');
-  assert.equal(second.calls.length, 5, '지난 4일은 저장해 둔 것을 써서 다시 안 부름');
+  assert.equal(second.calls.length, 0, '같은 날이라 오늘 받은 자료와 지난 날짜 저장분으로 다시 계산');
 
   // 다음 등교일(10/19 월)에 3번이 또 안 하면 1회부터
   const mon = new Date('2026-10-18T23:30:00Z'); // 한국 시간 10/19(월) 08:30 → 이전 등교일 10/16

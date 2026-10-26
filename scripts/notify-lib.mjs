@@ -117,6 +117,29 @@ function makeDayCache(config, room, fetchImpl, readOnly) {
   };
 }
 
+/** 오늘 받은 반·명단·L27 통과·이전 등교일 기록 (사이트와 같은 문서 rooms/{room}/cache/mathBase) */
+function makeBaseCache(config, room, fetchImpl, readOnly) {
+  const path = `rooms/${encodeURIComponent(room)}/cache/mathBase`;
+  return {
+    async load(code) {
+      try {
+        const d = await fsGet(config, path, fetchImpl);
+        return d && d.classCode === code ? JSON.parse(d.baseJson || 'null') : null;
+      } catch {
+        return null;
+      }
+    },
+    async save(code, base) {
+      if (readOnly) return;
+      try {
+        await fsSet(config, path, { classCode: code, baseJson: JSON.stringify(base), savedAt: Date.now() }, fetchImpl);
+      } catch {
+        // 저장 못 해도 다음에 다시 받으면 돼요
+      }
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // 토큰 암호화 보관
 // ---------------------------------------------------------------------------
@@ -224,6 +247,7 @@ export async function runNotify({
     limit: roomData.mathLimit,
     cleared: roomData.mathCleared,
     dayCache: makeDayCache(config, room, fetchImpl, dryRun), // 연습 실행은 저장하지 않음
+    baseCache: makeBaseCache(config, room, fetchImpl, dryRun),
     now,
     fetchImpl,
   });
