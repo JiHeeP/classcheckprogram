@@ -25,7 +25,11 @@ async function shot(page, name) {
 async function main() {
   const { fakeFirestoreFetch, sampleDb, SAMPLE_NAMES } = await import('./fake-firestore.js');
   const { SchoolCalendar, todayKST } = await import('../public/js/lib/schoolday.js');
+  const { ALL_COUNT_FROM } = await import('../public/js/lib/mathpractice.js');
   const prev = new SchoolCalendar().prevSchoolDay(todayKST());
+  // 10/28 화면부터는 L27 통과 학생(12번 오수아)도 세서 안 한 학생이 3명
+  const allCount = todayKST() >= ALL_COUNT_FROM;
+  const missingCount = allCount ? 3 : 2;
   const fakeMath = fakeFirestoreFetch(sampleDb(prev));
 
   // 프록시가 있는 환경이면 localhost 만 프록시를 거치지 않게 (Playwright 의 proxy 옵션은 localhost 도 프록시로 보냄)
@@ -147,9 +151,15 @@ async function main() {
   await page.getByRole('link', { name: '수학 확인' }).click();
   await page.locator('.name-chip').first().waitFor({ timeout: 10000 });
   const names = await page.locator('.name-chip').allTextContents();
-  assert(names.length === 2 && names.join(',').includes('박도윤'), `안 한 학생 2명: ${names.join(', ')}`);
+  assert(names.length === missingCount && names.join(',').includes('박도윤'), `안 한 학생 ${missingCount}명: ${names.join(', ')}`);
   const skip = await page.locator('.math-notes', { hasText: '세지 않음' }).textContent();
-  assert(skip.includes('오수아') && skip.includes('테스트'), `L27 통과·제외 학생은 빠짐 (${skip.trim()})`);
+  if (allCount) assert(!skip.includes('오수아') && skip.includes('테스트'), `제외 이름만 빠짐 (${skip.trim()})`);
+  else assert(skip.includes('오수아') && skip.includes('테스트'), `L27 통과·제외 학생은 빠짐 (${skip.trim()})`);
+  const prog = await page.locator('.progress-row').allTextContents();
+  assert(prog.length === 15, `레벨·점수: 한 학생 15명 (${prog.length}명)`);
+  assert(await page.locator('.progress-row.up').count() === 13, '그날 처음 L3 를 통과한 13명은 레벨 상승');
+  assert(prog[0].includes('L3 통과 → L4') && prog[0].includes('L3 100점'), `레벨 상승·점수 같이 보임 (${prog[0]})`);
+  assert(prog.some((t) => t.includes('L3 연습')) && prog.some((t) => t.includes('접속만')), '연습만·접속만도 구분');
   await shot(page, '03-math');
 
   console.log('누적 벌 대상: 설정 → 큰 이름 → 해제');
@@ -161,7 +171,7 @@ async function main() {
   await page.getByRole('link', { name: '수학 확인' }).click();
   await page.locator('.penalty-card').first().waitFor({ timeout: 10000 });
   const cards = await page.locator('.penalty-card').allTextContents();
-  assert(cards.length === 2 && cards.join(' ').includes('박도윤') && cards.join(' ').includes('조하준'), `누적 1회 이상 2명이 아래에 따로: ${cards.join(' / ')}`);
+  assert(cards.length === missingCount && cards.join(' ').includes('박도윤') && cards.join(' ').includes('조하준'), `누적 1회 이상 ${missingCount}명이 아래에 따로: ${cards.join(' / ')}`);
   assert(cards[0].includes('누적 1회'), '누적 횟수가 같이 보임');
   const bigName = await page.locator('.penalty-name').first().evaluate((n) => parseFloat(getComputedStyle(n).fontSize));
   const chipName = await page.locator('.name-chip').first().evaluate((n) => parseFloat(getComputedStyle(n).fontSize));
@@ -170,7 +180,7 @@ async function main() {
   await page.locator('.penalty-card', { hasText: '박도윤' }).getByRole('button', { name: /해제/ }).click();
   await page.getByRole('button', { name: '해제하고 0부터', exact: true }).click();
   await page.locator('.penalty-card', { hasText: '박도윤' }).waitFor({ state: 'detached', timeout: 10000 });
-  await page.waitForFunction(() => document.querySelectorAll('.penalty-card').length === 1, null, { timeout: 10000 });
+  await page.waitForFunction((n) => document.querySelectorAll('.penalty-card').length === n, missingCount - 1, { timeout: 10000 });
   assert(await page.locator('.penalty-card', { hasText: '조하준' }).count() === 1, '해제한 학생만 빠지고 다른 학생은 그대로');
   assert(await page.locator('.name-chip', { hasText: '박도윤' }).count() === 1, '위쪽 "안 한 학생"에는 그대로 있음 (해제는 누적만 0으로)');
   await shot(page, '03-math-cleared');
@@ -219,7 +229,11 @@ async function main() {
   await pop.locator('.name-chip').first().waitFor({ timeout: 10000 });
   assert(await pop.locator('.tabs').isHidden(), '팝업에는 메뉴 탭이 없음');
   const popNames = await pop.locator('.name-chip').allTextContents();
-  assert(popNames.length === 2 && popNames.join(',').includes('조하준'), `팝업에 안 한 학생 2명: ${popNames.join(', ')}`);
+  assert(popNames.length === missingCount && popNames.join(',').includes('조하준'), `팝업에 안 한 학생 ${missingCount}명: ${popNames.join(', ')}`);
+  await pop.locator('.progress-row.up').first().waitFor({ timeout: 10000 });
+  assert(await pop.locator('.progress-row').count() === 15, '팝업에도 레벨·점수가 같이 보임');
+  const popUp = await pop.locator('.progress-row.up').first().textContent();
+  assert(popUp.includes('L3 통과 → L4') && popUp.includes('100점'), `팝업 레벨 상승·점수 (${popUp})`);
   await shot(pop, '05-popup');
   await pop.close();
 

@@ -172,7 +172,7 @@ function settingsSection(ctx) {
         rows: 3, value: s.mathExcludeText, placeholder: '한 줄에 한 명\n전지현\n테스트',
         on: { input: (e) => { s.mathExcludeText = e.target.value; touch(); } },
       }),
-      el('span.field-hint', '분수 연산 마스터에 적힌 이름과 똑같이 적어 주세요. 마지막 단계(L27)를 통과한 학생은 따로 적지 않아도 자동으로 빠져요.')),
+      el('span.field-hint', '분수 연산 마스터에 적힌 이름과 똑같이 적어 주세요. 10/28 화면부터는 L27 통과 학생도 세니, 빼야 할 학생은 여기에 적어 주세요.')),
     el('label.field', el('span.field-label', '누적 세기 시작일'),
       el('input.input', {
         value: s.mathCountStart, placeholder: '2026-10-08', inputmode: 'numeric',
