@@ -1,5 +1,6 @@
 @echo off
-rem  Register a weekday 08:30 popup that opens the math-check screen in a small window.
+rem  Register a weekday 08:30 popup that opens the math-check screen in a small window,
+rem  with a tray icon (right side of the taskbar) to show/hide it, keep it on top, lock its place, and more.
 rem  (File contents are plain English on purpose: Korean text breaks old cmd windows.)
 setlocal
 cd /d "%~dp0"
@@ -35,10 +36,21 @@ if "%CH%"=="3" set POS=tl
 if "%CH%"=="4" set POS=bl
 if "%CH%"=="5" set POS=c
 
-rem the launcher that opens the small window (Edge is installed on every Windows 10/11 PC)
-rem the page itself moves the window to the chosen corner every time, so the spot never drifts
+if not exist "%~dp0math_popup_tray.ps1" (
+  echo.
+  echo math_popup_tray.ps1 is missing from this folder. Download the whole school-pc folder again.
+  pause
+  exit /b 1
+)
+
+rem stop a popup that is already running and forget its old place, so the corner chosen above is used
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0math_popup_tray.ps1" -Quit
+timeout /t 2 /nobreak >nul
+if exist "%APPDATA%\ClassroomMathPopup\settings.json" del "%APPDATA%\ClassroomMathPopup\settings.json"
+
+rem the launcher: starts the tray program, which opens the small Edge window (Edge is on every Windows 10/11 PC)
 > "%~dp0open_math_popup.bat" echo @echo off
->> "%~dp0open_math_popup.bat" echo start "" msedge --app="%SITE%/?popup=1&pos=%POS%" --window-size=560,620
+>> "%~dp0open_math_popup.bat" echo start "" /min powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%%~dp0math_popup_tray.ps1" -Site "%SITE%" -Pos %POS% -W 560 -H 620
 
 schtasks /create /tn "ClassroomMathPopup" /tr "\"%~dp0open_math_popup.bat\"" /sc weekly /d MON,TUE,WED,THU,FRI /st 08:30 /f
 if errorlevel 1 (
@@ -50,13 +62,18 @@ if errorlevel 1 (
 
 echo.
 set /p LOGON=Also open the popup every time you log in to Windows? (y/n):
-if /i "%LOGON%"=="y" schtasks /create /tn "ClassroomMathPopupLogon" /tr "\"%~dp0open_math_popup.bat\"" /sc onlogon /delay 0001:00 /f
+schtasks /delete /tn "ClassroomMathPopupLogon" /f >nul 2>&1
+if /i "%LOGON%"=="y" reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v ClassroomMathPopup /t REG_SZ /d "\"%~dp0open_math_popup.bat\"" /f >nul
+if /i not "%LOGON%"=="y" reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v ClassroomMathPopup /f >nul 2>&1
 
 echo.
 echo  Done. The popup opens every weekday at 08:30 (the PC must be on and logged in).
 echo  Address used: %SITE%
 echo  Position: %POS%  (tr=top right, br=bottom right, tl=top left, bl=bottom left, c=center)
 echo  Keep this folder where it is. If you move it, run this file again.
+echo.
+echo  Look for the round icon next to the clock (it may be behind the little arrow).
+echo  Click it to show/hide the popup. Right-click it for: always on top, lock place, move, size, run at login, quit.
 echo.
 set /p NOW=Open the popup now to check it? (y/n): 
 if /i "%NOW%"=="y" start "" "%~dp0open_math_popup.bat"

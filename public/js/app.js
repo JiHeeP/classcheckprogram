@@ -13,11 +13,15 @@ const VIEWS = { check: checkView, draw: drawView, math: mathView, class: classVi
 const DEFAULT_TAB = 'check';
 // ?popup=1 : 학교 PC 바탕화면 팝업용. 메뉴 없이 수학 확인 화면만 작게 보여 준다.
 //   &pos=tr|br|tl|bl|c  창 위치(오른쪽 위·오른쪽 아래·왼쪽 위·왼쪽 아래·가운데, 기본 tr)
+//   &pos=keep           화면이 창을 옮기지 않음 (트레이 프로그램 school-pc/math_popup_tray.ps1 이 자리를 맡을 때)
 //   &w=560&h=520        창 크기
+// 팝업 창 제목은 늘 '수학 확인 팝업'으로 시작한다. 트레이 프로그램이 이 제목으로 창을 찾아 '항상 위'·자리 고정을 건다.
 const POPUP = new URLSearchParams(location.search).has('popup');
+const POPUP_TITLE = '수학 확인 팝업';
 if (POPUP) {
   document.body.classList.add('popup');
-  placePopupWindow();
+  document.title = POPUP_TITLE;
+  if (new URLSearchParams(location.search).get('pos') !== 'keep') placePopupWindow();
 }
 
 /**
@@ -168,7 +172,7 @@ async function main() {
     ctx.status = status;
     const name = state.room.className || '우리 반';
     classNameEl.textContent = name;
-    document.title = name;
+    document.title = POPUP ? `${POPUP_TITLE} · ${name}` : name;
     updateBanner();
     render();
   });
