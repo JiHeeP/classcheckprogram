@@ -171,3 +171,37 @@ test('지난 날짜는 저장해 두고 다시 조회하지 않음', async () =>
   assert.equal(second.calls.length, 5, '저장된 날짜는 다시 안 부름');
   assert.deepEqual(r2.counts, r1.counts);
 });
+
+test('오늘 받은 반·명단·L27·이전 등교일 기록은 하루 동안 다시 안 부름 (새로고침·다음 날은 다시)', async () => {
+  let saved = null;
+  const baseCache = {
+    load: async () => saved,
+    save: async (_code, b) => { saved = JSON.parse(JSON.stringify(b)); },
+  };
+  const first = fakeFirestoreFetch(sampleDb('2026-10-08'));
+  const r1 = await buildReport({ classCode: 'TEST01', now: NOW, fetchImpl: first, baseCache });
+  assert.equal(first.calls.length, 5);
+  assert.equal(saved.date, '2026-10-11');
+  assert.equal(saved.prev, '2026-10-08');
+
+  const later = new Date(NOW.getTime() + 5 * 3600 * 1000);
+  const second = fakeFirestoreFetch(sampleDb('2026-10-08'));
+  const r2 = await buildReport({ classCode: 'TEST01', now: later, fetchImpl: second, baseCache, excludeNames: ['테스트'] });
+  assert.equal(second.calls.length, 0, '같은 날은 저장한 것으로 계산');
+  assert.deepEqual(r2.missing.map((s) => s.no), ['3', '7'], '설정(제외 이름)이 바뀌어도 다시 계산됨');
+  assert.deepEqual(r2.graduated, r1.graduated);
+  assert.equal(r2.accessOnly, r1.accessOnly);
+
+  const third = fakeFirestoreFetch(sampleDb('2026-10-08'));
+  await buildReport({ classCode: 'TEST01', now: later, fetchImpl: third, baseCache, refresh: true });
+  assert.equal(third.calls.length, 5, '새로고침은 새로 받음');
+
+  const offDay = fakeFirestoreFetch(sampleDb('2026-10-08'));
+  const r4 = await buildReport({ classCode: 'TEST01', now: later, fetchImpl: offDay, baseCache, offDays: ['2026-10-08'] });
+  assert.equal(offDay.calls.length, 2, '쉬는 날을 고쳐 이전 등교일이 바뀌면 그날 기록만 새로');
+  assert.equal(r4.dateKey, '2026-10-07');
+
+  const tomorrow = fakeFirestoreFetch(sampleDb('2026-10-08'));
+  await buildReport({ classCode: 'TEST01', now: new Date('2026-10-11T23:30:00Z'), fetchImpl: tomorrow, baseCache });
+  assert.equal(tomorrow.calls.length, 5, '다음 날은 새로 받음');
+});

@@ -6,6 +6,8 @@
 //                                   closedAt 이 있으면 '저장한 기록'(지난 과제)
 //   rooms/{room}/draws/{id}         { title, min, max, createdAt, picks: { 번호: {sid,no,name,at} }, byStudent: { 학생id: 번호 } }
 //   rooms/{room}/cache/math         { sig, savedAt, report }   — 수학 결과 공유 캐시
+//   rooms/{room}/cache/mathDays     { classCode, daysJson }    — 지난 날짜별 '한 학생' (누적용)
+//   rooms/{room}/cache/mathBase     { classCode, baseJson }    — 오늘 받은 반·명단·L27 통과·이전 등교일 기록
 //
 // fs 는 Firebase 'firestore' 모듈(브라우저: gstatic, 테스트: npm firebase)을 그대로 넘겨받는다.
 
@@ -29,6 +31,7 @@ export function createStore(fs, db, room = 'main') {
   const drawCol = fs.collection(roomRef, 'draws');
   const mathRef = fs.doc(roomRef, 'cache', 'math');
   const daysRef = fs.doc(roomRef, 'cache', 'mathDays');
+  const baseRef = fs.doc(roomRef, 'cache', 'mathBase');
   const asgRef = (id) => fs.doc(asgCol, id);
   const drawRef = (id) => fs.doc(drawCol, id);
 
@@ -267,6 +270,26 @@ export function createStore(fs, db, room = 'main') {
     },
   };
 
+  /** 오늘 분수 연산 마스터에서 받은 기본 자료. 하루 안에는 다시 안 받는다 (새로고침 버튼만 예외) */
+  const baseCache = {
+    async load(code) {
+      try {
+        const snap = await fs.getDoc(baseRef);
+        const d = snap.exists() ? snap.data() : null;
+        return d && d.classCode === code ? JSON.parse(d.baseJson || 'null') : null;
+      } catch {
+        return null;
+      }
+    },
+    async save(code, base) {
+      try {
+        await fs.setDoc(baseRef, { classCode: code, baseJson: JSON.stringify(base), savedAt: Date.now() });
+      } catch {
+        // 저장 못 해도 다음에 다시 받으면 돼서 계속 진행
+      }
+    },
+  };
+
   async function getMath(room, { refresh = false, fetchImpl, base, at = new Date() } = {}) {
     if (!room.mathCode) throw new AppError('nocode', '우리 반 탭에서 수학 반 코드를 먼저 적어 주세요');
     const sig = [room.mathCode, room.offDaysText, room.mathExcludeText, room.mathCountStart, room.mathLimit,
@@ -294,6 +317,8 @@ export function createStore(fs, db, room = 'main') {
         limit: room.mathLimit,
         cleared: room.mathCleared || {},
         dayCache,
+        baseCache,
+        refresh,
         now: at,
         fetchImpl,
         base,
