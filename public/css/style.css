@@ -342,6 +342,42 @@ h1, h2, p { margin: 0; }
 .popup .penalty-count { font-size: 16px; }
 .popup .view { overflow-y: auto; }
 
+/* ---- 이전 등교일 레벨·점수 ---- */
+.progress {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: clamp(12px, 1.4vw, 24px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.progress-title { font-size: clamp(18px, 1.7vw, 30px); font-weight: 900; }
+.progress-title small { font-size: .6em; font-weight: 700; color: var(--done); }
+.progress-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 8px; }
+.progress-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-size: clamp(16px, 1.3vw, 22px);
+}
+.progress-row.up { background: var(--done-soft); border-color: #86efac; }
+.progress-who { font-weight: 800; white-space: nowrap; }
+.progress-who small { font-size: .75em; color: var(--ink-2); margin-right: 6px; }
+.progress-up { font-weight: 800; color: var(--done); white-space: nowrap; }
+.progress-score { color: var(--ink-2); margin-left: auto; }
+.levelup-note { color: var(--done); font-weight: 700; }
+.popup .levelup-note { font-size: 13px; }
+.popup .progress { padding: 10px; gap: 6px; }
+.popup .progress-title { font-size: 16px; }
+.popup .progress-list { grid-template-columns: 1fr; gap: 4px; }
+.popup .progress-row { font-size: 14px; padding: 4px 10px; }
+
 /* ---- 우리 반 ---- */
 .class-page { max-width: 860px; }
 .class-page h2 { font-size: 22px; }

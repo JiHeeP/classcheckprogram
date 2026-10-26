@@ -155,7 +155,8 @@ test('수학: 결과를 room 캐시에 남기고, 실패하면 마지막 결과�
   await new Promise((r) => setTimeout(r, 300)); // 캐시 저장 기다림
   const r2 = await store.getMath(room, { fetchImpl: ok, base, at });
   assert.equal(r2.cached, true);
-  assert.equal(ok.calls.length, 5); // 반 + 명단 + 그날 기록 + 접속 기록 + L27 기록. 두 번째는 캐시라 호출 없음
+  assert.equal(ok.calls.length, 6); // 반 + 명단 + 그날 기록 + 접속 기록 + L27 기록 + 그날 통과한 L3 의 예전 기록. 두 번째는 캐시라 호출 없음
+  assert.ok(r2.progress.some((s) => s.levelUp?.next === 'L4'), '레벨·점수도 캐시에 같이');
 
   const later = new Date(at.getTime() + 11 * 60 * 1000);
   const r3 = await store.getMath(room, { fetchImpl: fakeFirestoreFetch({}, { status: 429 }), base, at: later, refresh: true });

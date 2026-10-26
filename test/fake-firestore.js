@@ -73,6 +73,7 @@ export function fakeFirestoreFetch(db, opts = {}) {
           ? doc(`classes/${code}/logs/l${i}`, { studentNo: r.studentNo, ts: r.ts })
           : doc(`classes/${code}/results/r${i}`, {
             dateKey: r.dateKey, studentNo: String(r.studentNo), mode: r.mode, level: r.level, score: r.score,
+            ...(r.totalQuestions != null ? { totalQuestions: r.totalQuestions } : {}),
           }),
       }));
     return reply(rows.length ? rows : [{ readTime: new Date().toISOString() }]);

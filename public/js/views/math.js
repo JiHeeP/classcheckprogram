@@ -82,6 +82,26 @@ function penaltySection(ctx, r) {
       popup ? null : onTap(el('button.btn.penalty-clear', { type: 'button' }, '벌 받음 · 해제'), () => clearPenalty(ctx, r, s))))));
 }
 
+/** 이전 등교일에 한 학생의 레벨 상승·점수 */
+function progressSection(r) {
+  if (!r.progress?.length) return null;
+  const scoreText = (s) => {
+    const parts = s.scores.map((x) => `${x.level} ${x.score}점`);
+    if (s.practice.length) parts.push(`${s.practice.join('·')} 연습`);
+    return parts.length ? parts.join(' · ') : (s.accessOnly ? '접속만' : '기록 없음');
+  };
+  return el('section.progress',
+    el('h2.progress-title', `${r.dateLabel} 레벨·점수`,
+      el('small', r.levelUps ? ` · 레벨 상승 ${r.levelUps}명` : ' · 레벨 상승 없음')),
+    el('ul.progress-list', r.progress.map((s) => el(s.levelUp ? 'li.progress-row.up' : 'li.progress-row',
+      el('span.progress-who', el('small', `${s.no}번`), s.name),
+      s.levelUp
+        ? el('span.progress-up', s.levelUp.next ? `⬆ ${s.levelUp.passed} 통과 → ${s.levelUp.next}` : `🏁 ${s.levelUp.passed} 통과 (마지막)`)
+        : null,
+      el('span.progress-score', scoreText(s))))),
+    el('p.muted.small', '점수는 그날 도전에서 레벨마다 가장 높은 점수. 레벨 상승은 그날 처음 통과 점수를 넘어 다음 레벨 도전이 열린 것.'));
+}
+
 export function render(root, ctx, { changedTab } = {}) {
   const { room } = ctx.state;
   if (!room.mathCode) {
@@ -138,6 +158,13 @@ export function render(root, ctx, { changedTab } = {}) {
     r.excluded?.length ? `항상 제외: ${r.excluded.map((s) => s.name).join(', ')}` : '',
   ].filter(Boolean);
   const skipNote = skipped.length ? el('p.muted.math-notes', `세지 않음 — ${skipped.join(' · ')}`) : null;
+  const ups = (r.progress || []).filter((s) => s.levelUp);
+  const upNote = ups.length
+    ? el('p.math-notes.levelup-note', `⬆ 레벨 상승 ${ups.length}명 — ${ups.map((s) => {
+      const score = s.scores.find((x) => x.level === s.levelUp.passed)?.score;
+      return `${s.no}번 ${s.name} ${s.levelUp.passed}→${s.levelUp.next || '완료'}${score != null ? `(${score}점)` : ''}`;
+    }).join(' · ')}`)
+    : null;
   const watchNote = r.watch?.length
     ? el('p.muted.math-notes', `누적 지켜보기 (${r.limit}회 미만) — ${r.watch.map((s) => `${s.no}번 ${s.name} ${s.count}회`).join(' · ')}`)
     : null;
@@ -146,8 +173,9 @@ export function render(root, ctx, { changedTab } = {}) {
     el('div.page-head', title, refreshBtn),
     el('div.card.math-card', names),
     el('p.muted.math-notes', notes.join(' · ')),
-    skipNote, watchNote, warn, offNote,
+    upNote, skipNote, watchNote, warn, offNote,
     penaltySection(ctx, r),
+    progressSection(r),
     el('p.muted.small', '설날·추석·재량휴업일처럼 해마다 바뀌는 쉬는 날은 우리 반 탭의 "등교 안 하는 날"에 적어 주세요.')));
 }
 
