@@ -25,11 +25,9 @@ async function shot(page, name) {
 async function main() {
   const { fakeFirestoreFetch, sampleDb, SAMPLE_NAMES } = await import('./fake-firestore.js');
   const { SchoolCalendar, todayKST } = await import('../public/js/lib/schoolday.js');
-  const { ALL_COUNT_FROM } = await import('../public/js/lib/mathpractice.js');
   const prev = new SchoolCalendar().prevSchoolDay(todayKST());
-  // 10/28 화면부터는 L27 통과 학생(12번 오수아)도 세서 안 한 학생이 3명
-  const allCount = todayKST() >= ALL_COUNT_FROM;
-  const missingCount = allCount ? 3 : 2;
+  // 12번 오수아는 마지막 레벨(L36)을 통과해서 자동으로 빠지고, 안 한 학생은 3번·7번 2명
+  const missingCount = 2;
   const fakeMath = fakeFirestoreFetch(sampleDb(prev));
 
   // 프록시가 있는 환경이면 localhost 만 프록시를 거치지 않게 (Playwright 의 proxy 옵션은 localhost 도 프록시로 보냄)
@@ -153,8 +151,7 @@ async function main() {
   const names = await page.locator('.name-chip').allTextContents();
   assert(names.length === missingCount && names.join(',').includes('박도윤'), `안 한 학생 ${missingCount}명: ${names.join(', ')}`);
   const skip = await page.locator('.math-notes', { hasText: '세지 않음' }).textContent();
-  if (allCount) assert(!skip.includes('오수아') && skip.includes('테스트'), `제외 이름만 빠짐 (${skip.trim()})`);
-  else assert(skip.includes('오수아') && skip.includes('테스트'), `L27 통과·제외 학생은 빠짐 (${skip.trim()})`);
+  assert(skip.includes('오수아') && skip.includes('테스트'), `모든 레벨 통과·제외 학생은 빠짐 (${skip.trim()})`);
   const prog = await page.locator('.progress-row').allTextContents();
   assert(prog.length === 15, `레벨·점수: 한 학생 15명 (${prog.length}명)`);
   assert(await page.locator('.progress-row.up').count() === 13, '그날 처음 L3 를 통과한 13명은 레벨 상승');
@@ -169,7 +166,8 @@ async function main() {
   await page.getByRole('button', { name: '설정 저장' }).click();
   await page.locator('.toast', { hasText: '설정을 저장했어요' }).waitFor();
   await page.getByRole('link', { name: '수학 확인' }).click();
-  await page.locator('.penalty-card').first().waitFor({ timeout: 10000 });
+  // 설정을 바꾸면 새 결과가 올 때까지 이전 결과가 그대로 보이므로, 새 결과(누적 1회 이상 2명)로 바뀔 때까지 기다린다
+  await page.waitForFunction((n) => document.querySelectorAll('.penalty-card').length === n, missingCount, { timeout: 15000 });
   const cards = await page.locator('.penalty-card').allTextContents();
   assert(cards.length === missingCount && cards.join(' ').includes('박도윤') && cards.join(' ').includes('조하준'), `누적 1회 이상 ${missingCount}명이 아래에 따로: ${cards.join(' / ')}`);
   assert(cards[0].includes('누적 1회'), '누적 횟수가 같이 보임');
@@ -184,6 +182,21 @@ async function main() {
   assert(await page.locator('.penalty-card', { hasText: '조하준' }).count() === 1, '해제한 학생만 빠지고 다른 학생은 그대로');
   assert(await page.locator('.name-chip', { hasText: '박도윤' }).count() === 1, '위쪽 "안 한 학생"에는 그대로 있음 (해제는 누적만 0으로)');
   await shot(page, '03-math-cleared');
+
+  console.log('결석 처리: 이름 누르기 → 차감 → 되돌리기');
+  await page.locator('.name-chip', { hasText: '조하준' }).click();
+  await page.getByRole('button', { name: '결석 처리', exact: true }).click();
+  await page.locator('.name-chip', { hasText: '조하준' }).waitFor({ state: 'detached', timeout: 10000 });
+  await page.locator('.penalty-card', { hasText: '조하준' }).waitFor({ state: 'detached', timeout: 10000 });
+  const skip2 = await page.locator('.math-notes', { hasText: '세지 않음' }).textContent();
+  assert(skip2.includes('결석 1명') && skip2.includes('조하준'), `결석한 학생은 명단·누적에서 빠지고 표시됨 (${skip2.trim()})`);
+  assert((await page.locator('.math-notes', { hasText: '명 중' }).first().textContent()).includes('결석 1명 뺌'), '인원에서 결석이 차감됨');
+  assert(await page.locator('.absence-chips .chip.active', { hasText: '조하준' }).count() === 1, '결석 처리 칸에 선택된 모습');
+  await shot(page, '03-math-absent');
+  await page.locator('.absence-chips .chip.active', { hasText: '조하준' }).click();
+  await page.locator('.name-chip', { hasText: '조하준' }).waitFor({ timeout: 10000 });
+  await page.locator('.penalty-card', { hasText: '조하준' }).waitFor({ timeout: 10000 });
+  assert(true, '결석 취소하면 다시 명단·누적에 돌아옴');
 
   console.log('오프라인');
   await board.setOffline(true);

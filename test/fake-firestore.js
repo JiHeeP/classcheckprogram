@@ -87,7 +87,7 @@ export const WEEK_DAYS = ['2026-10-08', '2026-10-12', '2026-10-13', '2026-10-14'
 
 /**
  * WEEK_DAYS 동안 모든 학생이 매일 기록을 남기되, misses[번호] 에 적힌 날은 기록이 없다.
- * 4번은 기록 없이 접속만 하고, 12번은 마지막 단계(L27)를 통과했다.
+ * 4번은 기록 없이 접속만 하고, 12번은 마지막 레벨(L36)을 통과했다.
  */
 export function weekDb(misses = {}) {
   const students = [...SAMPLE_NAMES.map((name, i) => ({ no: String(i + 1), name })), { no: '99', name: '테스트' }];
@@ -100,7 +100,7 @@ export function weekDb(misses = {}) {
       else results.push({ dateKey: day, studentNo: st.no, mode: 'free', level: 'L3', score: null });
     }
   }
-  results.push({ dateKey: '2026-09-01', studentNo: '12', mode: 'challenge', level: 'L27', score: 220 });
+  results.push({ dateKey: '2026-09-01', studentNo: '12', mode: 'challenge', level: 'L36', score: 262 });
   return { TEST01: { name: '5학년 4반', offDays: [], students, results, logs } };
 }
 
@@ -113,8 +113,8 @@ export function kstMillis(dateKey, hour = 10, minute = 0) {
 /**
  * 로컬 개발용 샘플 반: 반 코드 TEST01 (18명 + '테스트' 99번)
  * - 이전 등교일 기록에서 3번·7번·12번·99번이 빠짐 (4번은 기록 없이 접속만 함 → 했다로 셈)
- * - 12번은 예전에 마지막 단계(L27) 통과(218점) → 미실시에서 빠져야 함
- * - 3번은 L27 을 했지만 통과 점수(216) 미달(200점) → 미실시에 남아야 함
+ * - 12번은 예전에 마지막 레벨(L36) 통과(262점) → 미실시에서 빠져야 함
+ * - 3번은 L36 을 했지만 통과 점수(261) 미달(240점) → 미실시에 남아야 함
  * - 7번은 이전 등교일이 아닌 다른 날에만 접속 → 미실시에 남아야 함
  */
 export function sampleDb(prevDateKey) {
@@ -123,9 +123,9 @@ export function sampleDb(prevDateKey) {
     .filter((s) => !['3', '4', '7', '12', '99'].includes(s.no))
     .map((s) => ({ dateKey: prevDateKey, studentNo: s.no, mode: s.no === '5' ? 'free' : 'challenge', level: 'L3', score: 100 }));
   results.push(
-    { dateKey: '2026-09-01', studentNo: '12', mode: 'challenge', level: 'L27', score: 218 },
-    { dateKey: '2026-09-01', studentNo: '3', mode: 'challenge', level: 'L27', score: 200 },
-    { dateKey: '2026-09-01', studentNo: '7', mode: 'free', level: 'L27', score: null },
+    { dateKey: '2026-09-01', studentNo: '12', mode: 'challenge', level: 'L36', score: 262 },
+    { dateKey: '2026-09-01', studentNo: '3', mode: 'challenge', level: 'L36', score: 240 },
+    { dateKey: '2026-09-01', studentNo: '7', mode: 'free', level: 'L36', score: null },
   );
   const logs = [
     { studentNo: '4', ts: kstMillis(prevDateKey, 10, 5) },     // 이전 등교일에 접속만

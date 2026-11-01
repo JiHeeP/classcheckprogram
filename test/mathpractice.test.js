@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildReport, MathError, MathPracticeClient, parseNames, kstDayRange } from '../public/js/lib/mathpractice.js';
+import {
+  buildReport, MathError, MathPracticeClient, parseNames, kstDayRange, absentKey, FINAL_LEVEL, FINAL_PASS_SCORE,
+} from '../public/js/lib/mathpractice.js';
+import { SchoolCalendar } from '../public/js/lib/schoolday.js';
 import { fakeFirestoreFetch, sampleDb, kstMillis, weekDb, WEEK_DAYS as DAYS } from './fake-firestore.js';
 
 // 한국 시간 2026-10-11(일) 오전 → 이전 등교일 10/8(목)
@@ -11,7 +14,7 @@ test('이전 등교일에 안 한 학생', async () => {
   assert.equal(r.classCode, 'TEST01');
   assert.equal(r.dateKey, '2026-10-08');
   assert.equal(r.dateLabel, '10/8 (목)');
-  // 12번은 L27 통과라 빠지고, '테스트'(99번)는 아직 제외 목록이 없어서 남음
+  // 12번은 마지막 레벨(L36) 통과라 빠지고, '테스트'(99번)는 아직 제외 목록이 없어서 남음
   assert.deepEqual(r.missing.map((s) => s.no), ['3', '7', '99']);
   assert.deepEqual(r.graduated.map((s) => s.no), ['12']);
   assert.equal(r.total, 18);
@@ -49,11 +52,11 @@ test('항상 제외할 이름은 세지 않음', async () => {
   });
   assert.deepEqual(r.missing.map((s) => s.no), ['3', '7']);
   assert.deepEqual(r.excluded.map((s) => s.name), ['송예준', '테스트']);
-  assert.equal(r.total, 16); // 19명 - L27 통과 1 - 제외 2
+  assert.equal(r.total, 16); // 19명 - 마지막 레벨 통과 1 - 제외 2
   assert.equal(r.done, 14);
 });
 
-test('L27 통과 점수(216) 미달이나 자유 연습은 통과로 안 봄', async () => {
+test('마지막 레벨 통과 점수(261) 미달이나 자유 연습은 통과로 안 봄', async () => {
   const r = await buildReport({ classCode: 'TEST01', now: NOW, fetchImpl: fakeFirestoreFetch(sampleDb('2026-10-08')) });
   assert.ok(r.missing.some((s) => s.no === '3'));
   assert.ok(r.missing.some((s) => s.no === '7'));
@@ -164,7 +167,7 @@ test('지난 날짜는 저장해 두고 다시 조회하지 않음', async () =>
   const first = fakeFirestoreFetch(weekDb(MISSES));
   const r1 = await buildReport({ ...baseArgs(), fetchImpl: first, dayCache });
   assert.deepEqual(Object.keys(saved).sort(), DAYS);
-  assert.equal(first.calls.length, 5 + 4 * 2, '반·명단·이전 등교일(기록·접속)·L27 + 지난 4일 × 2');
+  assert.equal(first.calls.length, 5 + 4 * 2, '반·명단·이전 등교일(기록·접속)·마지막 레벨 + 지난 4일 × 2');
 
   const second = fakeFirestoreFetch(weekDb(MISSES));
   const r2 = await buildReport({ ...baseArgs(), fetchImpl: second, dayCache });
@@ -172,7 +175,7 @@ test('지난 날짜는 저장해 두고 다시 조회하지 않음', async () =>
   assert.deepEqual(r2.counts, r1.counts);
 });
 
-test('오늘 받은 반·명단·L27·이전 등교일 기록은 하루 동안 다시 안 부름 (새로고침·다음 날은 다시)', async () => {
+test('오늘 받은 반·명단·마지막 레벨·이전 등교일 기록은 하루 동안 다시 안 부름 (새로고침·다음 날은 다시)', async () => {
   let saved = null;
   const baseCache = {
     load: async () => saved,
@@ -180,7 +183,7 @@ test('오늘 받은 반·명단·L27·이전 등교일 기록은 하루 동안 �
   };
   const first = fakeFirestoreFetch(sampleDb('2026-10-08'));
   const r1 = await buildReport({ classCode: 'TEST01', now: NOW, fetchImpl: first, baseCache });
-  assert.equal(first.calls.length, 6, '반·명단·L27·이전 등교일(기록·접속)·그날 통과한 L3 의 예전 기록');
+  assert.equal(first.calls.length, 6, '반·명단·마지막 레벨·이전 등교일(기록·접속)·그날 통과한 L3 의 예전 기록');
   assert.equal(saved.date, '2026-10-11');
   assert.equal(saved.prev, '2026-10-08');
 
@@ -258,33 +261,79 @@ test('레벨 상승 판정: 통과 점수는 만점 - 허용 오답 × 2 (문제
 });
 
 // ---------------------------------------------------------------------------
-// L28~L36 추가: 10/28 화면(10/27 기록)부터 L27 통과 학생도 센다
+// 모든 레벨 통과 학생 자동 제외
 // ---------------------------------------------------------------------------
 
-test('L27 통과 학생: 10/27 화면까지는 빼고, 10/28 화면부터 센다 (누적은 10/27 기록부터)', async () => {
+test('마지막 레벨은 L36 이고 통과 점수는 261', () => {
+  assert.equal(FINAL_LEVEL, 'L36');
+  assert.equal(FINAL_PASS_SCORE, 261);
+});
+
+test('마지막 레벨(L36)을 통과한 학생은 자동으로 빠지고, L27 만 통과한 학생은 센다', async () => {
   const days = ['2026-10-22', '2026-10-23', '2026-10-26', '2026-10-27'];
-  const students = [{ no: '1', name: '김민준' }, { no: '12', name: '오수아' }, { no: '13', name: '서이준' }, { no: '99', name: '테스트' }];
+  const students = [
+    { no: '1', name: '김민준' }, { no: '12', name: '오수아' }, { no: '13', name: '서이준' }, { no: '14', name: '한지우' },
+  ];
   const results = [
-    { dateKey: '2026-09-01', studentNo: '12', mode: 'challenge', level: 'L27', score: 220 },
-    { dateKey: '2026-10-27', studentNo: '13', mode: 'challenge', level: 'L27', score: 218 }, // 10/27 에 처음 통과
+    { dateKey: '2026-10-20', studentNo: '12', mode: 'challenge', level: 'L36', score: 262 }, // 끝까지 통과
+    { dateKey: '2026-10-20', studentNo: '13', mode: 'challenge', level: 'L27', score: 218 }, // L27 만 통과
+    { dateKey: '2026-10-20', studentNo: '14', mode: 'challenge', level: 'L36', score: 250 }, // L36 도전했지만 미달
   ];
   for (const d of days) results.push({ dateKey: d, studentNo: '1', mode: 'free', level: 'L3', score: null });
   const db = { TEST01: { name: '5학년 4반', offDays: [], students, results, logs: [] } };
-  const args = { classCode: 'TEST01', excludeNames: ['테스트'], countStart: '2026-10-22', fetchImpl: fakeFirestoreFetch(db) };
+  const r = await buildReport({
+    classCode: 'TEST01', countStart: '2026-10-22', now: new Date('2026-10-27T23:30:00Z'), fetchImpl: fakeFirestoreFetch(db),
+  });
+  assert.equal(r.dateKey, '2026-10-27');
+  assert.deepEqual(r.graduated.map((s) => s.no), ['12']);
+  assert.deepEqual(r.missing.map((s) => s.no), ['13', '14']);
+  assert.equal(r.total, 3);
+  assert.equal(r.counts['12'], undefined, '끝까지 통과한 학생은 누적도 안 셈');
+  assert.equal(r.counts['13'], 4);
+  assert.equal(r.counts['14'], 4);
+});
 
-  const tue = await buildReport({ ...args, now: new Date('2026-10-26T23:30:00Z') }); // 10/27(화) 화면 → 10/26 기록
-  assert.equal(tue.dateKey, '2026-10-26');
-  assert.deepEqual(tue.graduated.map((s) => s.no), ['12'], '10/27 화면은 지금처럼 L27 통과 학생을 뺌');
-  assert.deepEqual(tue.missing.map((s) => s.no), ['13']);
-  assert.equal(tue.counts['12'], undefined);
-  assert.equal(tue.counts['13'], 3, '13번은 아직 L27 통과 전이라 원래대로 셈');
+// ---------------------------------------------------------------------------
+// 결석 차감
+// ---------------------------------------------------------------------------
 
-  const wed = await buildReport({ ...args, now: new Date('2026-10-27T23:30:00Z') }); // 10/28(수) 화면 → 10/27 기록
-  assert.equal(wed.dateKey, '2026-10-27');
-  assert.deepEqual(wed.graduated, [], '10/28 화면부터는 항상 뺄 이름만 빼고 모두 셈');
-  assert.deepEqual(wed.missing.map((s) => s.no), ['12']);
-  assert.equal(wed.total, 3);
-  assert.equal(wed.counts['12'], 1, '누적은 10/27 기록부터 (그 전은 빠지던 날)');
-  assert.equal(wed.counts['13'], 3, '10/27 이후 통과한 학생은 그 전 날도 원래대로 셈');
-  assert.deepEqual(wed.excluded.map((s) => s.name), ['테스트']);
+test('결석 처리한 학생은 그날 명단·인원에서 빠지고 누적도 안 셈', async () => {
+  const MISSES = { 3: [DAYS[2], DAYS[3], DAYS[4]], 7: [DAYS[4]] };
+  const args = { classCode: 'TEST01', now: new Date('2026-10-15T23:30:00Z'), countStart: DAYS[0], excludeNames: ['테스트'], limit: 3 };
+  assert.equal(new SchoolCalendar().prevSchoolDay('2026-10-16'), DAYS[4]);
+  const before = await buildReport({ ...args, fetchImpl: fakeFirestoreFetch(weekDb(MISSES)) });
+  assert.equal(before.dateKey, DAYS[4]);
+  assert.deepEqual(before.missing.map((s) => s.no), ['3', '7']);
+  assert.equal(before.counts['3'], 3);
+  assert.deepEqual(before.overLimit.map((s) => s.no), ['3']);
+  assert.equal(before.total, 17);
+
+  // 3번이 이전 등교일(DAYS[4])과 그 전날(DAYS[3])에 결석
+  const absent = { [absentKey(DAYS[4], '3')]: true, [absentKey(DAYS[3], '3')]: true, [absentKey(DAYS[4], '99')]: false };
+  const after = await buildReport({ ...args, absent, fetchImpl: fakeFirestoreFetch(weekDb(MISSES)) });
+  assert.deepEqual(after.missing.map((s) => s.no), ['7']);
+  assert.deepEqual(after.absent.map((s) => s.no), ['3']);
+  assert.equal(after.total, 16);
+  assert.equal(after.done, 15);
+  assert.equal(after.counts['3'], 1, '3일 중 결석 2일을 빼고 1회');
+  assert.deepEqual(after.overLimit, []);
+  assert.deepEqual(after.watch.map((s) => [s.no, s.count]), [['3', 1], ['7', 1]]);
+  assert.ok(after.students.some((s) => s.no === '3'), '결석 처리 화면에는 결석한 학생도 나옴');
+});
+
+test('다른 날 결석이나 취소(false)한 결석은 이전 등교일 명단에 영향이 없음', async () => {
+  const absent = { [absentKey('2026-10-07', '3')]: true, [absentKey('2026-10-08', '7')]: false };
+  const r = await buildReport({ classCode: 'TEST01', now: NOW, absent, fetchImpl: fakeFirestoreFetch(sampleDb('2026-10-08')) });
+  assert.deepEqual(r.missing.map((s) => s.no), ['3', '7', '99']);
+  assert.deepEqual(r.absent, []);
+});
+
+test('결석은 하루 저장 자료(baseCache)와 상관없이 바로 반영됨', async () => {
+  let saved = null;
+  const baseCache = { load: async () => saved, save: async (_c, b) => { saved = JSON.parse(JSON.stringify(b)); } };
+  await buildReport({ classCode: 'TEST01', now: NOW, fetchImpl: fakeFirestoreFetch(sampleDb('2026-10-08')), baseCache });
+  const next = fakeFirestoreFetch(sampleDb('2026-10-08'));
+  const r = await buildReport({ classCode: 'TEST01', now: NOW, absent: { [absentKey('2026-10-08', '7')]: true }, fetchImpl: next, baseCache });
+  assert.equal(next.calls.length, 0);
+  assert.deepEqual(r.missing.map((s) => s.no), ['3', '99']);
 });

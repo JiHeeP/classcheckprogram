@@ -300,6 +300,7 @@ h1, h2, p { margin: 0; }
   gap: 10px;
 }
 .name-chip small { font-size: .5em; font-weight: 700; }
+.name-chip.tappable { cursor: pointer; }
 .all-done { font-size: clamp(30px, 3.5vw, 64px); font-weight: 900; color: var(--done); }
 .math-notes { font-size: clamp(16px, 1.3vw, 22px); text-align: center; }
 .math-error { display: flex; flex-direction: column; gap: 10px; align-items: center; }
@@ -377,6 +378,20 @@ h1, h2, p { margin: 0; }
 .popup .progress-title { font-size: 16px; }
 .popup .progress-list { grid-template-columns: 1fr; gap: 4px; }
 .popup .progress-row { font-size: 14px; padding: 4px 10px; }
+
+/* ---- 결석 처리 ---- */
+.absence {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: clamp(12px, 1.4vw, 24px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.absence-dates, .absence-chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.absence-date { min-height: 48px; padding: 0 12px; border: 1px solid var(--line); border-radius: 12px; font: inherit; background: var(--surface); }
 
 /* ---- 우리 반 ---- */
 .class-page { max-width: 860px; }

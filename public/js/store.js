@@ -1,13 +1,14 @@
 // Firestore 저장소
 // 구조 (모두 rooms/{room} 아래)
 //   rooms/{room}                    { className, mathCode, offDaysText, mathExcludeText, roster: [{id,no,name}],
-//                                     mathCountStart, mathLimit, mathCleared: { 번호: 'YYYY-MM-DD'(그 날까지 해제) } }
+//                                     mathCountStart, mathLimit, mathCleared: { 번호: 'YYYY-MM-DD'(그 날까지 해제) },
+//                                     mathAbsent: { 'YYYY-MM-DD_번호': true(그날 결석) } }
 //   rooms/{room}/assignments/{id}   { title, createdAt, closedAt?, done: { 학생id: 완료시각 } }
 //                                   closedAt 이 있으면 '저장한 기록'(지난 과제)
 //   rooms/{room}/draws/{id}         { title, min, max, createdAt, picks: { 번호: {sid,no,name,at} }, byStudent: { 학생id: 번호 } }
 //   rooms/{room}/cache/math         { sig, savedAt, report }   — 수학 결과 공유 캐시
 //   rooms/{room}/cache/mathDays     { classCode, daysJson }    — 지난 날짜별 '한 학생' (누적용)
-//   rooms/{room}/cache/mathBase     { classCode, baseJson }    — 오늘 받은 반·명단·L27 통과·이전 등교일 기록
+//   rooms/{room}/cache/mathBase     { classCode, baseJson }    — 오늘 받은 반·명단·마지막 레벨 통과·이전 등교일 기록
 //
 // fs 는 Firebase 'firestore' 모듈(브라우저: gstatic, 테스트: npm firebase)을 그대로 넘겨받는다.
 
@@ -16,7 +17,7 @@ import {
   validateCountStart, validateLimit,
 } from './lib/model.js';
 import {
-  buildReport, MathError, MathPracticeClient, DEFAULT_EXCLUDE_TEXT, DEFAULT_COUNT_START, DEFAULT_LIMIT, parseNames,
+  buildReport, MathError, MathPracticeClient, absentKey, DEFAULT_EXCLUDE_TEXT, DEFAULT_COUNT_START, DEFAULT_LIMIT, parseNames,
 } from './lib/mathpractice.js';
 import { parseDate, parseOffDays, todayKST } from './lib/schoolday.js';
 
@@ -24,6 +25,13 @@ const MATH_FRESH_MS = 10 * 60 * 1000;
 const MATH_REFRESH_MIN_MS = 60 * 1000;
 
 const tsToISO = (v) => (v && typeof v.toDate === 'function' ? v.toDate().toISOString() : v ?? null);
+
+/** 결석 기록에서 true 인 것만 ('날짜_번호': true). 취소한 것(false)은 버림 */
+function cleanAbsent(v) {
+  const out = {};
+  if (v && typeof v === 'object') for (const [k, on] of Object.entries(v)) if (on === true) out[k] = true;
+  return out;
+}
 
 export function createStore(fs, db, room = 'main') {
   const roomRef = fs.doc(db, 'rooms', room);
@@ -45,6 +53,7 @@ export function createStore(fs, db, room = 'main') {
       mathCountStart: parseDate(data.mathCountStart) || DEFAULT_COUNT_START,
       mathLimit: Number.isInteger(data.mathLimit) && data.mathLimit >= 1 ? data.mathLimit : DEFAULT_LIMIT,
       mathCleared: data.mathCleared && typeof data.mathCleared === 'object' ? { ...data.mathCleared } : {},
+      mathAbsent: cleanAbsent(data.mathAbsent),
       roster: Array.isArray(data.roster) ? data.roster : [],
     };
   }
@@ -250,6 +259,17 @@ export function createStore(fs, db, room = 'main') {
     return fs.setDoc(roomRef, { mathCleared: { [String(no)]: dateKey }, updatedAt: fs.serverTimestamp() }, { merge: true });
   }
 
+  /**
+   * 그날 결석 처리(차감) 또는 취소. 결석한 날은 그날 명단과 누적에서 빠진다.
+   * 학생마다·날짜마다 따로 저장해서 여러 곳에서 동시에 눌러도 서로 안 덮어쓴다. (이름은 저장하지 않고 번호만)
+   */
+  function setMathAbsent(no, dateKey, absent) {
+    const day = parseDate(dateKey);
+    const num = String(no ?? '').trim();
+    if (!day || !num) throw new AppError('invalid', '날짜와 학생 번호를 확인해 주세요');
+    return fs.setDoc(roomRef, { mathAbsent: { [absentKey(day, num)]: Boolean(absent) }, updatedAt: fs.serverTimestamp() }, { merge: true });
+  }
+
   /** 지난 날짜별 '그날 한 학생 번호'를 한 문서에 모아 둔다 (그날은 끝났으니 다시 안 바뀜) */
   const dayCache = {
     async load(code) {
@@ -293,7 +313,7 @@ export function createStore(fs, db, room = 'main') {
   async function getMath(room, { refresh = false, fetchImpl, base, at = new Date() } = {}) {
     if (!room.mathCode) throw new AppError('nocode', '우리 반 탭에서 수학 반 코드를 먼저 적어 주세요');
     const sig = [room.mathCode, room.offDaysText, room.mathExcludeText, room.mathCountStart, room.mathLimit,
-      JSON.stringify(room.mathCleared || {}), todayKST(at)].join('|');
+      JSON.stringify(room.mathCleared || {}), JSON.stringify(room.mathAbsent || {}), todayKST(at)].join('|');
 
     let cached = null;
     try {
@@ -316,6 +336,7 @@ export function createStore(fs, db, room = 'main') {
         countStart: room.mathCountStart,
         limit: room.mathLimit,
         cleared: room.mathCleared || {},
+        absent: room.mathAbsent || {},
         dayCache,
         baseCache,
         refresh,
@@ -377,6 +398,7 @@ export function createStore(fs, db, room = 'main') {
       mathCountStart: parseDate(r.mathCountStart) || DEFAULT_COUNT_START,
       mathLimit: Number.isInteger(r.mathLimit) && r.mathLimit >= 1 ? r.mathLimit : DEFAULT_LIMIT,
       mathCleared: r.mathCleared && typeof r.mathCleared === 'object' ? r.mathCleared : {},
+      mathAbsent: cleanAbsent(r.mathAbsent),
       roster,
       updatedAt: fs.serverTimestamp(),
     });
@@ -420,6 +442,7 @@ export function createStore(fs, db, room = 'main') {
     cancelPick,
     getMath,
     clearMathCount,
+    setMathAbsent,
     mathStudents,
     exportAll,
     importAll,

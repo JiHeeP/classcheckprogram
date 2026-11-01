@@ -97,7 +97,7 @@ test('연습 실행: 카카오는 부르지 않고 내용만', async () => {
   const w = world();
   const r = await runNotify({ config: CONFIG, env: {}, dryRun: true, now: MONDAY, fetchImpl: w.fetchImpl });
   assert.equal(r.status, 'dry-run');
-  assert.equal(r.count, 2); // 3번, 7번 (12번은 L27 통과, 99번 테스트는 제외 목록)
+  assert.equal(r.count, 2); // 3번, 7번 (12번은 마지막 레벨 통과, 99번 테스트는 제외 목록)
   assert.match(r.text, /3번 박도윤, 7번 조하준/);
   assert.equal(w.refreshCalls.length, 0);
   assert.equal(w.sent.length, 0);
@@ -188,6 +188,17 @@ test('누적 기준 이상 학생이 카카오톡에 들어가고, 지난 날짜
   assert.match(w.sent[0].template.text, /⚠ 누적 3회 이상: 3번 박도윤\(5회\), 5번 정시우\(3회\)/);
   const days = JSON.parse(w.store.get('rooms/main/cache/mathDays').fields.daysJson.stringValue);
   assert.deepEqual(Object.keys(days).sort(), ['2026-10-08', '2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15']);
+});
+
+test('결석으로 적어 둔 학생은 알림에서 빠지고 "결석 N명 제외"가 붙음', async () => {
+  const w = world({ db: weekDb({ 3: ['2026-10-15'], 5: ['2026-10-15'] }) });
+  const absent = { mapValue: { fields: { '2026-10-15_3': { booleanValue: true }, '2026-10-14_5': { booleanValue: true } } } };
+  w.store.set('rooms/main', roomDoc({ mathExcludeText: sv('테스트'), mathAbsent: absent }));
+  const FRI = new Date('2026-10-15T23:30:00Z');
+  const r = await runNotify({ config: CONFIG, env: {}, dryRun: true, now: FRI, fetchImpl: w.fetchImpl });
+  assert.equal(r.count, 1, '5번만 남음 (3번은 결석, 5번의 결석 기록은 다른 날)');
+  assert.match(r.text, /결석 1명 제외/);
+  assert.doesNotMatch(r.text, /3번/);
 });
 
 test('연습 실행은 지난 날짜를 저장하지 않음', async () => {
