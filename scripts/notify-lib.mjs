@@ -26,7 +26,7 @@ const TEXT_LIMIT = 200; // 카카오 텍스트 메시지 글자 수 (문서에 �
 /** 안 한 학생이 많아 글자 수를 넘으면 앞에서부터 담고 "외 N명"으로 줄인다. */
 export function buildMessage(report, { className = '', maxLen = TEXT_LIMIT } = {}) {
   const head = `${className ? `${className} ` : ''}수학 안 한 사람 · ${report.dateLabel}`;
-  const foot = `(${report.total}명 중 ${report.done}명 함)`;
+  const foot = `(${report.total}명 중 ${report.done}명 함${report.absent?.length ? ` · 결석 ${report.absent.length}명 제외` : ''})`;
   const missing = report.missing.map((s) => `${s.no}번 ${s.name}`);
   const over = (report.overLimit || []).map((s) => `${s.no}번 ${s.name}(${s.count}회)`);
 
@@ -90,6 +90,7 @@ export async function readRoom(config, room, fetchImpl) {
     mathCountStart: parseDate(d.mathCountStart) || DEFAULT_COUNT_START,
     mathLimit: Number.isInteger(d.mathLimit) && d.mathLimit >= 1 ? d.mathLimit : DEFAULT_LIMIT,
     mathCleared: d.mathCleared && typeof d.mathCleared === 'object' ? d.mathCleared : {},
+    mathAbsent: d.mathAbsent && typeof d.mathAbsent === 'object' ? d.mathAbsent : {},
     roster: Array.isArray(d.roster) ? d.roster : [],
   };
 }
@@ -117,7 +118,7 @@ function makeDayCache(config, room, fetchImpl, readOnly) {
   };
 }
 
-/** 오늘 받은 반·명단·L27 통과·이전 등교일 기록 (사이트와 같은 문서 rooms/{room}/cache/mathBase) */
+/** 오늘 받은 반·명단·마지막 레벨 통과·이전 등교일 기록 (사이트와 같은 문서 rooms/{room}/cache/mathBase) */
 function makeBaseCache(config, room, fetchImpl, readOnly) {
   const path = `rooms/${encodeURIComponent(room)}/cache/mathBase`;
   return {
@@ -246,6 +247,7 @@ export async function runNotify({
     countStart: roomData.mathCountStart,
     limit: roomData.mathLimit,
     cleared: roomData.mathCleared,
+    absent: roomData.mathAbsent,
     dayCache: makeDayCache(config, room, fetchImpl, dryRun), // 연습 실행은 저장하지 않음
     baseCache: makeBaseCache(config, room, fetchImpl, dryRun),
     now,

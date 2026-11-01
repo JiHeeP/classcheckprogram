@@ -146,7 +146,7 @@ test('수학: 결과를 room 캐시에 남기고, 실패하면 마지막 결과�
 
   const ok = fakeFirestoreFetch(sampleDb('2026-10-08'));
   const r1 = await store.getMath(room, { fetchImpl: ok, base, at });
-  // 기본 제외(전지현·테스트)와 L27 통과(12번)는 빠짐
+  // 기본 제외(전지현·테스트)와 마지막 레벨 통과(12번)는 빠짐
   assert.deepEqual(r1.missing.map((s) => s.no), ['3', '7']);
   assert.deepEqual(r1.graduated.map((s) => s.no), ['12']);
   assert.deepEqual(r1.excluded.map((s) => s.name), ['테스트']);
@@ -155,7 +155,7 @@ test('수학: 결과를 room 캐시에 남기고, 실패하면 마지막 결과�
   await new Promise((r) => setTimeout(r, 300)); // 캐시 저장 기다림
   const r2 = await store.getMath(room, { fetchImpl: ok, base, at });
   assert.equal(r2.cached, true);
-  assert.equal(ok.calls.length, 6); // 반 + 명단 + 그날 기록 + 접속 기록 + L27 기록 + 그날 통과한 L3 의 예전 기록. 두 번째는 캐시라 호출 없음
+  assert.equal(ok.calls.length, 6); // 반 + 명단 + 그날 기록 + 접속 기록 + 마지막 레벨 기록 + 그날 통과한 L3 의 예전 기록. 두 번째는 캐시라 호출 없음
   assert.ok(r2.progress.some((s) => s.levelUp?.next === 'L4'), '레벨·점수도 캐시에 같이');
 
   const later = new Date(at.getTime() + 11 * 60 * 1000);
@@ -221,6 +221,30 @@ test('누적: 설정 검증 → 계산 → 해제하면 0부터 → 지난 날�
   const r3 = await store.getMath(room, { fetchImpl: third, base, at: mon });
   assert.equal(r3.dateKey, '2026-10-16');
   assert.equal(r3.counts['3'], 1, '해제 다음 등교일(10/16)부터 센다');
+});
+
+test('결석: 처리·취소가 저장되고 그날 명단·누적에서 빠짐 (이름은 저장 안 함)', { skip }, async () => {
+  const store = freshStore();
+  await withRoster(store);
+  await store.saveSettings({ mathCode: 'test01', mathCountStart: '2026-10-08', mathLimit: 3 });
+  assert.throws(() => store.setMathAbsent('3', '언젠가', true), (e) => e.code === 'invalid');
+  await store.setMathAbsent('3', '2026-10-15', true);
+  await store.setMathAbsent('5', '2026-10-15', true);
+  await store.setMathAbsent('5', '2026-10-15', false);
+  let { room } = await waitState(store, (s) => s.room.mathAbsent['2026-10-15_3'] === true);
+  assert.deepEqual(room.mathAbsent, { '2026-10-15_3': true }, '취소한 것은 안 남음');
+
+  const base = 'http://fake/documents';
+  const at = new Date('2026-10-15T23:30:00Z'); // 이전 등교일 10/15
+  const misses = { 3: ['2026-10-15'], 5: ['2026-10-15'] };
+  const r = await store.getMath(room, { fetchImpl: fakeFirestoreFetch(weekDb(misses)), base, at });
+  assert.deepEqual(r.missing.map((s) => s.no), ['5']);
+  assert.deepEqual(r.absent.map((s) => s.no), ['3']);
+
+  await store.setMathAbsent('3', '2026-10-15', false);
+  ({ room } = await waitState(store, (s) => !s.room.mathAbsent['2026-10-15_3']));
+  const r2 = await store.getMath(room, { fetchImpl: fakeFirestoreFetch(weekDb(misses)), base, at });
+  assert.deepEqual(r2.missing.map((s) => s.no), ['3', '5'], '결석을 취소하면 설정이 바뀐 것으로 보고 다시 계산');
 });
 
 test('누적: 설정·해제 기록이 백업에 들어가고 복원됨', { skip }, async () => {

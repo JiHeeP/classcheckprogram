@@ -45,13 +45,10 @@ function challengeScore(r) {
   return Number(r.score);
 }
 
-// 예전 마지막 단계. 10/27(화) 기록까지는 이 단계를 통과한 학생을 세지 않았다.
-export const FINAL_LEVEL = 'L27';
-export const FINAL_PASS_SCORE = passScore(FINAL_LEVEL); // 216
-
-// 레벨(L28~L36)이 추가되어 이 날 화면부터는 L27 통과 학생도 센다 (항상 뺄 이름만 빼고 모두).
-//   이 날의 이전 등교일 기록부터 센다: 10/28 화면 = 10/27 기록부터
-export const ALL_COUNT_FROM = '2026-10-28';
+// 마지막 레벨(지금은 L36). 이 레벨을 통과한 학생은 모든 레벨을 끝낸 것이라 수학 확인에서 자동으로 뺀다.
+// 레벨이 더 늘면 마지막 레벨도 따라서 바뀐다.
+export const FINAL_LEVEL = LEVEL_ORDER[LEVEL_ORDER.length - 1];
+export const FINAL_PASS_SCORE = passScore(FINAL_LEVEL); // L36: 261
 
 // 누적 세기: 이 날부터 등교일마다 '안 한 날'을 세고, 이 횟수 이상이면 벌 대상으로 따로 보여 준다
 export const DEFAULT_COUNT_START = '2026-10-08';
@@ -66,6 +63,9 @@ export function kstDayRange(dateKey) {
   const start = Date.UTC(y, m - 1, d) - 9 * 3600 * 1000;
   return [start, start + 24 * 3600 * 1000];
 }
+
+/** 결석 기록의 열쇠: 날짜와 번호를 이어 붙인 것 ('2026-11-02_3'). 학생 이름은 저장하지 않는다 */
+export const absentKey = (dateKey, no) => `${dateKey}_${no}`;
 
 /** 줄·쉼표로 나뉜 이름 목록. '#' 뒤는 메모 */
 export function parseNames(text) {
@@ -216,7 +216,7 @@ export class MathPracticeClient {
     return out;
   }
 
-  /** 마지막 단계(L27)를 통과한 학생 → 처음 통과한 날 (Map 번호 → 'YYYY-MM-DD') */
+  /** 마지막 레벨을 통과한 학생 → 처음 통과한 날 (Map 번호 → 'YYYY-MM-DD') */
   async fetchFinalPassed() {
     const passed = new Map();
     for (const r of await this.fetchChallenges(FINAL_LEVEL)) {
@@ -314,8 +314,8 @@ export function summarizeDay(rows) {
  * 이전 등교일에 수학을 하지 않은 학생 목록.
  * - roster 가 있으면 번호가 같은 학생의 이름은 우리 반 명단 이름을 쓴다.
  * - excludeNames 에 있는 이름은 세지 않는다.
- * - 마지막 단계(L27)를 통과한 학생은 ALL_COUNT_FROM 화면 전까지(그 이전 등교일 기록 전까지) 세지 않는다.
- *   L28~L36 이 생겨서 그 뒤로는 모두 센다. 누적도 그 날부터만 센다.
+ * - 마지막 레벨(FINAL_LEVEL)을 통과한 학생은 모든 레벨을 끝낸 것이라 자동으로 세지 않는다 (누적도 안 셈).
+ * - absent({'날짜_번호': true}) 에 있는 학생은 그날 결석이라 그날 명단·누적에서 뺀다 (차감).
  * - '했다' 기준: 그날 분수 연산 마스터에 접속했거나(화면을 켜서 시작), 연습·도전 기록이 있으면.
  * - 누적: countStart 부터 이전 등교일까지 등교일마다 '안 한 날'을 학생별로 센다.
  *   cleared[번호] = 'YYYY-MM-DD' 이면 그 날까지의 횟수는 지운 것(해제)이라 다음 날부터 센다.
@@ -324,12 +324,12 @@ export function summarizeDay(rows) {
  * - dayCache({load(classCode)→{날짜:[번호…]}, save(classCode, {날짜:[번호…]})}) 를 주면 지난 날짜의
  *   '한 학생' 목록을 저장해 두고 다시 조회하지 않는다 (분수 연산 마스터의 무료 읽기 한도 절약).
  * - baseCache({load(classCode)→base|null, save(classCode, base)}) 를 주면 오늘 한 번 받은
- *   반 정보·명단·L27 통과·이전 등교일 기록을 오늘 하루 동안 다시 쓴다. 이전 등교일은 이미 끝난 날이라
+ *   반 정보·명단·마지막 레벨 통과·이전 등교일 기록을 오늘 하루 동안 다시 쓴다. 이전 등교일은 이미 끝난 날이라
  *   하루 안에 결과가 바뀌지 않는다. refresh 면 무시하고 새로 받는다 (새로고침 버튼).
  */
 export async function buildReport({
   classCode, offDays = [], roster = [], excludeNames = [], now = new Date(), fetchImpl, base,
-  countStart = DEFAULT_COUNT_START, limit = DEFAULT_LIMIT, cleared = {}, dayCache = null,
+  countStart = DEFAULT_COUNT_START, limit = DEFAULT_LIMIT, cleared = {}, absent = {}, dayCache = null,
   baseCache = null, refresh = false,
 } = {}) {
   if (!classCode) throw new MathError('nocode', '우리 반 탭에서 수학 반 코드를 먼저 적어 주세요', 400);
@@ -341,7 +341,8 @@ export async function buildReport({
   if (baseCache && !refresh) {
     saved = await baseCache.load(client.code).catch(() => null);
     // 레벨·점수가 없던 예전 형식이면 새로 받는다
-    if (saved?.date !== today || !Array.isArray(saved.prevRows) || !Array.isArray(saved.finalPassed?.[0] ?? [])) saved = null;
+    // 마지막 레벨이 바뀌었으면 (예: L27 → L36) 통과한 학생 목록도 새로 받는다
+    if (saved?.date !== today || !Array.isArray(saved.prevRows) || saved.finalLevel !== FINAL_LEVEL) saved = null;
   }
   let cls, students, finalPassed;
   if (saved) {
@@ -375,15 +376,13 @@ export async function buildReport({
   }
   if (baseCache && !(saved && saved.prev === prev)) {
     await baseCache.save(client.code, {
-      date: today, cls, students, finalPassed: [...finalPassed], prev, prevRows, accessed: [...accessed], levelUps,
+      date: today, cls, students, finalLevel: FINAL_LEVEL, finalPassed: [...finalPassed], prev, prevRows, accessed: [...accessed], levelUps,
     }).catch(() => {});
   }
   const withRecord = new Set(prevRows.map((r) => r.no));
   const done = new Set([...withRecord, ...accessed]);
 
-  // L27 통과 학생을 빼는 마지막 날: ALL_COUNT_FROM 화면의 이전 등교일 전날까지
-  const allFrom = cal.prevSchoolDay(ALL_COUNT_FROM) || ALL_COUNT_FROM;
-  const exempt = (no, day) => day < allFrom && finalPassed.has(no) && finalPassed.get(no) < allFrom;
+  const isAbsent = (no, day) => absent[absentKey(day, no)] === true;
 
   const nameByNo = new Map(roster.map((s) => [String(s.no), s.name]));
   const excludeSet = new Set(excludeNames.map((n) => String(n).trim()).filter(Boolean));
@@ -394,11 +393,14 @@ export async function buildReport({
     const name = nameByNo.get(s.no) || s.name;
     const entry = { no: s.no, name };
     if (excludeSet.has(name) || excludeSet.has(s.name)) excluded.push(entry);
-    else if (exempt(s.no, prev)) graduated.push(entry);
+    else if (finalPassed.has(s.no)) graduated.push(entry);
     else counted.push(entry);
   }
-  const missing = counted.filter((s) => !done.has(s.no));
-  const accessOnly = counted.filter((s) => accessed.has(s.no) && !withRecord.has(s.no));
+  // 이전 등교일에 결석으로 적어 둔 학생은 그날 명단에서 뺀다 (했어도 결석으로 적었으면 뺌)
+  const absentPrev = counted.filter((s) => isAbsent(s.no, prev));
+  const present = counted.filter((s) => !isAbsent(s.no, prev));
+  const missing = present.filter((s) => !done.has(s.no));
+  const accessOnly = present.filter((s) => accessed.has(s.no) && !withRecord.has(s.no));
 
   // ---- 레벨·점수 (이전 등교일에 한 학생, 항상 뺄 이름 제외) ----
   const day = summarizeDay(prevRows);
@@ -446,7 +448,7 @@ export async function buildReport({
   const counts = {};
   for (const s of counted) {
     const from = cleared[s.no] || '';
-    counts[s.no] = days.filter((d) => d > from && !exempt(s.no, d) && !doneByDay.get(d).has(s.no)).length;
+    counts[s.no] = days.filter((d) => d > from && !isAbsent(s.no, d) && !doneByDay.get(d).has(s.no)).length;
   }
   const byCount = (a, b) => b.count - a.count || Number(a.no) - Number(b.no);
   const watch = counted
@@ -464,10 +466,12 @@ export async function buildReport({
     dateKey: prev,
     dateLabel: label(prev),
     missing,
-    done: counted.length - missing.length,
-    total: counted.length,
-    graduated,
+    done: present.length - missing.length,
+    total: present.length,
+    graduated,   // 마지막 레벨 통과로 자동 제외 [{no, name}]
     excluded,
+    absent: absentPrev,   // 이전 등교일 결석으로 뺀 학생 [{no, name}]
+    students: counted,    // 세는 학생 전체 (결석 처리 화면용) [{no, name}]
     accessOnly: accessOnly.length, // 기록은 없지만 접속해서 '했다'로 센 학생 수
     progress,     // 이전 등교일에 한 학생의 레벨·점수 [{no, name, levelUp:{passed,next}|null, scores:[{level,score}], practice, accessOnly}]
     levelUps: progress.filter((s) => s.levelUp).length,

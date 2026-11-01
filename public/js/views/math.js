@@ -1,11 +1,13 @@
 // 03 수학 확인: 분수 연산 마스터에서 이전 등교일에 안 한 학생
 import { el, onTap, confirmBox, toast } from '../ui.js';
 import { todayKST } from '../lib/schoolday.js';
+import { absentKey } from '../lib/mathpractice.js';
 
 const AUTO_REFRESH_MS = 10 * 60 * 1000;
 
 const m = {
-  sig: '',        // 반 코드·쉬는 날·누적 설정·해제가 바뀌면 다시 받아온다
+  sig: '',        // 반 코드·쉬는 날·누적 설정·해제·결석이 바뀌면 다시 받아온다
+  absentDate: '', // 결석 처리 화면에서 고른 날짜 (비면 이전 등교일)
   code: '',       // 마지막으로 받아온 수학 반 코드 (다른 반이면 이전 결과를 지움)
   again: false,   // 받아오는 중에 설정이 또 바뀌면 끝난 뒤 한 번 더
   report: null,
@@ -17,7 +19,7 @@ const m = {
 
 function signature(room) {
   return [room.mathCode, room.offDaysText, room.mathExcludeText, room.mathCountStart, room.mathLimit,
-    JSON.stringify(room.mathCleared || {}),
+    JSON.stringify(room.mathCleared || {}), JSON.stringify(room.mathAbsent || {}),
     room.roster.map((s) => `${s.no}:${s.name}`).join(',')].join('|');
 }
 
@@ -82,6 +84,55 @@ function penaltySection(ctx, r) {
       popup ? null : onTap(el('button.btn.penalty-clear', { type: 'button' }, '벌 받음 · 해제'), () => clearPenalty(ctx, r, s))))));
 }
 
+async function markAbsent(ctx, r, s) {
+  const ok = await confirmBox(`${s.no}번 ${s.name} 결석 처리`,
+    `${r.dateLabel} 결석으로 처리해요.\n그날 안 한 날로 세지 않고(차감), 명단에서도 빠져요. 아래 "결석 처리"에서 되돌릴 수 있어요.`,
+    { ok: '결석 처리' });
+  if (!ok) return;
+  try {
+    await ctx.store.setMathAbsent(s.no, r.dateKey, true);
+    toast(`${s.no}번 결석 처리했어요`, 'ok');
+  } catch (e) {
+    ctx.fail(e);
+  }
+}
+
+/** 결석 처리: 날짜를 고르고 학생을 누르면 그날 결석 (안 한 날로 세지 않음). 오늘 결석도 미리 적어 둘 수 있다 */
+function absenceSection(ctx, r) {
+  if (document.body.classList.contains('popup') || !r.students?.length) return null;
+  const today = todayKST();
+  const date = m.absentDate || r.dateKey;
+  const absent = ctx.state.room.mathAbsent || {};
+  const isOn = (s) => absent[absentKey(date, s.no)] === true;
+  const pick = (d) => {
+    m.absentDate = d;
+    ctx.rerender();
+  };
+  const toggle = async (s) => {
+    try {
+      await ctx.store.setMathAbsent(s.no, date, !isOn(s));
+    } catch (e) {
+      ctx.fail(e);
+    }
+  };
+  const dateBtn = (d, text) => onTap(el(d === date ? 'button.chip.active' : 'button.chip', { type: 'button' }, text), () => pick(d), { key: `absent-date:${d}` });
+  const onCount = r.students.filter(isOn).length;
+  return el('section.absence',
+    el('h2.progress-title', '결석 처리',
+      el('small', ` · ${shortDate(date)} 결석 ${onCount}명`)),
+    el('p.muted.small', '결석한 날은 안 한 날로 세지 않고(차감) 그날 명단에서도 빠져요. 이름을 누르면 결석, 다시 누르면 취소예요. 오늘 결석도 미리 적어 둘 수 있어요.'),
+    el('div.absence-dates',
+      dateBtn(r.dateKey, `${shortDate(r.dateKey)} (이전 등교일)`),
+      dateBtn(today, `${shortDate(today)} (오늘)`),
+      el('input.absence-date', {
+        type: 'date', value: date, 'aria-label': '결석 날짜',
+        on: { change: (e) => e.target.value && pick(e.target.value) },
+      })),
+    el('div.absence-chips', r.students.map((s) => onTap(
+      el(isOn(s) ? 'button.chip.active' : 'button.chip', { type: 'button' }, `${s.no}번 ${s.name}`),
+      () => toggle(s), { key: `absent:${date}:${s.no}` }))));
+}
+
 /** 이전 등교일에 한 학생의 레벨 상승·점수 */
 function progressSection(r) {
   if (!r.progress?.length) return null;
@@ -140,13 +191,19 @@ export function render(root, ctx, { changedTab } = {}) {
   }
 
   const title = el('h1.page-title', `${r.dateLabel} 수학 안 한 사람`);
+  const popup = document.body.classList.contains('popup');
+  const chip = (s) => {
+    const node = el(popup ? 'span.name-chip' : 'span.name-chip.tappable', { title: popup ? null : '누르면 결석 처리' }, el('small', `${s.no}번`), s.name);
+    return popup ? node : onTap(node, () => markAbsent(ctx, r, s), { key: `missing:${r.dateKey}:${s.no}` });
+  };
   const names = r.missing.length
-    ? el('div.name-chips', r.missing.map((s) => el('span.name-chip', el('small', `${s.no}번`), s.name)))
+    ? el('div.name-chips', r.missing.map(chip))
     : el('p.all-done', '모두 했어요! 🎉');
 
   const notes = [
-    `${r.total}명 중 ${r.done}명 함`,
+    `${r.total}명 중 ${r.done}명 함${r.absent?.length ? ` (결석 ${r.absent.length}명 뺌)` : ''}`,
     r.accessOnly ? `접속만 한 ${r.accessOnly}명 포함` : '접속하거나 시작했으면 함',
+    popup || !r.missing.length ? '' : '이름을 누르면 결석 처리',
     `${r.fetchedDate && r.fetchedDate !== todayKST() ? `${r.fetchedDate.slice(5).replace('-', '/')} ` : ''}${r.fetchedAt} 확인`,
   ];
   const warn = r.stale
@@ -154,7 +211,8 @@ export function render(root, ctx, { changedTab } = {}) {
     : null;
   const offNote = r.todayOff ? el('p.muted', `오늘은 ${r.todayOff}이라 지난 등교일 ${r.dateLabel} 기준이에요.`) : null;
   const skipped = [
-    r.graduated?.length ? `마지막 단계(${r.finalLevel}) 통과 ${r.graduated.length}명: ${r.graduated.map((s) => s.name).join(', ')}` : '',
+    r.graduated?.length ? `모든 레벨 통과(${r.finalLevel}) ${r.graduated.length}명: ${r.graduated.map((s) => s.name).join(', ')}` : '',
+    r.absent?.length ? `${r.dateLabel} 결석 ${r.absent.length}명: ${r.absent.map((s) => s.name).join(', ')}` : '',
     r.excluded?.length ? `항상 제외: ${r.excluded.map((s) => s.name).join(', ')}` : '',
   ].filter(Boolean);
   const skipNote = skipped.length ? el('p.muted.math-notes', `세지 않음 — ${skipped.join(' · ')}`) : null;
@@ -172,10 +230,11 @@ export function render(root, ctx, { changedTab } = {}) {
   root.replaceChildren(el('div.page',
     el('div.page-head', title, refreshBtn),
     el('div.card.math-card', names),
-    el('p.muted.math-notes', notes.join(' · ')),
+    el('p.muted.math-notes', notes.filter(Boolean).join(' · ')),
     upNote, skipNote, watchNote, warn, offNote,
     penaltySection(ctx, r),
     progressSection(r),
+    absenceSection(ctx, r),
     el('p.muted.small', '설날·추석·재량휴업일처럼 해마다 바뀌는 쉬는 날은 우리 반 탭의 "등교 안 하는 날"에 적어 주세요.')));
 }
 
