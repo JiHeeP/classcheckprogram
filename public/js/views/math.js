@@ -139,7 +139,7 @@ function progressSection(r) {
   const scoreText = (s) => {
     const parts = s.scores.map((x) => `${x.level} ${x.score}점`);
     if (s.practice.length) parts.push(`${s.practice.join('·')} 연습`);
-    return parts.length ? parts.join(' · ') : (s.accessOnly ? '접속만' : '기록 없음');
+    return parts.length ? parts.join(' · ') : '기록 없음';
   };
   return el('section.progress',
     el('h2.progress-title', `${r.dateLabel} 레벨·점수`,
@@ -193,7 +193,8 @@ export function render(root, ctx, { changedTab } = {}) {
   const title = el('h1.page-title', `${r.dateLabel} 수학 안 한 사람`);
   const popup = document.body.classList.contains('popup');
   const chip = (s) => {
-    const node = el(popup ? 'span.name-chip' : 'span.name-chip.tappable', { title: popup ? null : '누르면 결석 처리' }, el('small', `${s.no}번`), s.name);
+    const node = el(popup ? 'span.name-chip' : 'span.name-chip.tappable', { title: popup ? null : '누르면 결석 처리' },
+      el('small', `${s.no}번`), s.name, s.accessOnly ? el('small.access-only', '접속만') : null);
     return popup ? node : onTap(node, () => markAbsent(ctx, r, s), { key: `missing:${r.dateKey}:${s.no}` });
   };
   const names = r.missing.length
@@ -202,7 +203,7 @@ export function render(root, ctx, { changedTab } = {}) {
 
   const notes = [
     `${r.total}명 중 ${r.done}명 함${r.absent?.length ? ` (결석 ${r.absent.length}명 뺌)` : ''}`,
-    r.accessOnly ? `접속만 한 ${r.accessOnly}명 포함` : '접속하거나 시작했으면 함',
+    r.accessOnly ? `접속만 하고 안 푼 ${r.accessOnly}명도 안 함` : '연습·도전을 풀어야 함 (접속만은 안 함)',
     popup || !r.missing.length ? '' : '이름을 누르면 결석 처리',
     `${r.fetchedDate && r.fetchedDate !== todayKST() ? `${r.fetchedDate.slice(5).replace('-', '/')} ` : ''}${r.fetchedAt} 확인`,
   ];

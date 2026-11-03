@@ -89,11 +89,11 @@ export const WEEK_DAYS = ['2026-10-08', '2026-10-12', '2026-10-13', '2026-10-14'
  * WEEK_DAYS 동안 모든 학생이 매일 기록을 남기되, misses[번호] 에 적힌 날은 기록이 없다.
  * 4번은 기록 없이 접속만 하고, 12번은 마지막 레벨(L36)을 통과했다.
  */
-export function weekDb(misses = {}) {
+export function weekDb(misses = {}, days = WEEK_DAYS) {
   const students = [...SAMPLE_NAMES.map((name, i) => ({ no: String(i + 1), name })), { no: '99', name: '테스트' }];
   const results = [];
   const logs = [];
-  for (const day of WEEK_DAYS) {
+  for (const day of days) {
     for (const st of students) {
       if ((misses[st.no] || []).includes(day)) continue;
       if (st.no === '4') logs.push({ studentNo: '4', ts: kstMillis(day, 9, 30) });

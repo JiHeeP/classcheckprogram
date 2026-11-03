@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildReport, MathError, MathPracticeClient, parseNames, kstDayRange, absentKey, FINAL_LEVEL, FINAL_PASS_SCORE,
+  STRICT_FROM, DONE_RULE,
 } from '../public/js/lib/mathpractice.js';
 import { SchoolCalendar } from '../public/js/lib/schoolday.js';
 import { fakeFirestoreFetch, sampleDb, kstMillis, weekDb, WEEK_DAYS as DAYS } from './fake-firestore.js';
@@ -18,15 +19,64 @@ test('이전 등교일에 안 한 학생', async () => {
   assert.deepEqual(r.missing.map((s) => s.no), ['3', '7', '99']);
   assert.deepEqual(r.graduated.map((s) => s.no), ['12']);
   assert.equal(r.total, 18);
-  assert.equal(r.done, 15); // 4번은 기록이 없어도 접속해서 '했다'로 셈
-  assert.equal(r.accessOnly, 1);
+  assert.equal(r.done, 15); // 10/8 은 예전 기준이라 4번은 기록이 없어도 접속해서 '했다'로 셈
+  assert.equal(r.accessOnly, 0, '예전 기준 날짜는 접속만 한 학생이 안 한 사람에 없음');
   assert.equal(r.todayOff, '주말');
 });
 
-test('접속만 해도 했다: 4번 포함, 다른 날 접속(7번)은 안 셈', async () => {
+test('예전 기준(STRICT_FROM 전): 접속만 해도 했다, 다른 날 접속(7번)은 안 셈', async () => {
   const r = await buildReport({ classCode: 'TEST01', now: NOW, fetchImpl: fakeFirestoreFetch(sampleDb('2026-10-08')) });
   assert.ok(!r.missing.some((s) => s.no === '4'));
   assert.ok(r.missing.some((s) => s.no === '7'));
+});
+
+// ---------------------------------------------------------------------------
+// 새 기준 (STRICT_FROM 부터): 접속만 한 학생은 '안 함'
+// ---------------------------------------------------------------------------
+
+// 한국 시간 2026-11-03(화) 08:30 → 이전 등교일 11/2(월)
+const NOV3 = new Date('2026-11-02T23:30:00Z');
+
+test('새 기준: 접속만 한 학생(4번)은 안 함으로 표시하고 accessOnly 를 붙임', async () => {
+  assert.equal(STRICT_FROM, '2026-11-02');
+  const r = await buildReport({ classCode: 'TEST01', now: NOV3, excludeNames: ['테스트'], fetchImpl: fakeFirestoreFetch(sampleDb('2026-11-02')) });
+  assert.equal(r.dateKey, '2026-11-02');
+  assert.deepEqual(r.missing.map((s) => s.no), ['3', '4', '7']);
+  assert.deepEqual(r.missing.map((s) => s.accessOnly), [false, true, false]);
+  assert.equal(r.accessOnly, 1);
+  assert.equal(r.total, 17);
+  assert.equal(r.done, 14);
+  assert.ok(!r.progress.some((s) => s.no === '4'), '레벨·점수에도 안 나옴');
+});
+
+// 10/29(목)·10/30(금)·11/2(월)·11/3(화). 4번은 매일 접속만 함
+const NOV_DAYS = ['2026-10-29', '2026-10-30', '2026-11-02', '2026-11-03'];
+const NOV4 = new Date('2026-11-03T23:30:00Z'); // 한국 시간 11/4(수) 08:30 → 이전 등교일 11/3
+
+test('새 기준 누적: STRICT_FROM 전 날짜는 접속만 해도 한 날, 그 뒤는 안 한 날', async () => {
+  const r = await buildReport({
+    classCode: 'TEST01', now: NOV4, excludeNames: ['테스트'], countStart: '2026-10-29',
+    fetchImpl: fakeFirestoreFetch(weekDb({}, NOV_DAYS)),
+  });
+  assert.equal(r.countedDays, 4);
+  assert.equal(r.counts['4'], 2, '11/2, 11/3 두 번만 (10/29, 10/30 은 예전 기준)');
+  assert.equal(r.counts['1'], 0);
+});
+
+test('새 기준 누적: 예전 기준으로 저장한 새 날짜(11/2)는 버리고 다시 받고, 그 전 날짜는 그대로 씀', async () => {
+  const old = Object.fromEntries(NOV_DAYS.slice(0, 3).map((d) => [d, ['1', '2', '4', '5']])); // 예전 기준: 4번 포함
+  let saved = { ...old };
+  const dayCache = { load: async () => ({ ...saved }), save: async (_c, all) => { saved = all; } };
+  const fetch = fakeFirestoreFetch(weekDb({}, NOV_DAYS));
+  const r = await buildReport({
+    classCode: 'TEST01', now: NOV4, excludeNames: ['테스트'], countStart: '2026-10-29', fetchImpl: fetch, dayCache,
+  });
+  assert.equal(fetch.calls.length, 5 + 1, '반·명단·마지막 레벨·이전 등교일(기록·접속) + 11/2 기록만 (접속은 안 받음)');
+  assert.equal(r.counts['4'], 2);
+  assert.equal(r.counts['3'], 2, '10/29·10/30 저장본엔 3번이 없어서 안 한 날 그대로');
+  assert.equal(saved.rule, DONE_RULE);
+  assert.ok(!saved['2026-11-02'].includes('4'), '11/2 는 새 기준으로 다시 저장');
+  assert.deepEqual(saved['2026-10-30'], ['1', '2', '4', '5'], '예전 날짜는 그대로');
 });
 
 test('접속 기록의 하루 범위는 한국 시간 0시~24시', async () => {
@@ -166,7 +216,8 @@ test('지난 날짜는 저장해 두고 다시 조회하지 않음', async () =>
   };
   const first = fakeFirestoreFetch(weekDb(MISSES));
   const r1 = await buildReport({ ...baseArgs(), fetchImpl: first, dayCache });
-  assert.deepEqual(Object.keys(saved).sort(), DAYS);
+  assert.deepEqual(Object.keys(saved).filter((k) => k !== 'rule').sort(), DAYS);
+  assert.equal(saved.rule, DONE_RULE);
   assert.equal(first.calls.length, 5 + 4 * 2, '반·명단·이전 등교일(기록·접속)·마지막 레벨 + 지난 4일 × 2');
 
   const second = fakeFirestoreFetch(weekDb(MISSES));
@@ -242,7 +293,7 @@ test('레벨·점수: 그날 처음 통과한 레벨은 레벨 상승, 전에 �
   assert.deepEqual(by['5'].practice, ['L3']);
   assert.equal(by['5'].levelUp, null);
   assert.deepEqual(by['6'].practice, ['L5'], '중도 포기·문제 수 미달은 점수로 안 침');
-  assert.equal(by['4'].accessOnly, true);
+  assert.deepEqual(by['4'].scores, [], '예전 기준 날짜에 접속만 한 학생은 기록 없음');
   assert.ok(!by['3'] && !by['7'], '안 한 학생은 없음');
   assert.equal(r.levelUps, 12, '기록 있는 14명 중 1번(전에 통과)·5번(연습) 빼고');
   assert.equal(r.progress[0].no, '2', '레벨 상승이 먼저');

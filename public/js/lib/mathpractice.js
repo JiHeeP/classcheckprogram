@@ -54,6 +54,14 @@ export const FINAL_PASS_SCORE = passScore(FINAL_LEVEL); // L36: 261
 export const DEFAULT_COUNT_START = '2026-10-08';
 export const DEFAULT_LIMIT = 3;
 
+// '했다' 기준
+//   STRICT_FROM 날짜부터: 연습·도전 기록이 있어야 '했다'. 접속만 한 학생은 '안 함'
+//   그 전 날짜: 예전 기준 그대로 (접속만 해도 '했다') → 이미 쌓인 누적은 바뀌지 않는다
+// 2026-11-03(화)에 바뀜. 이날 화면에 나오는 11/2(월)부터 새 기준.
+export const STRICT_FROM = '2026-11-02';
+// 기준이 바뀌면 이 값을 바꾼다. 결과 캐시와, 새 기준 날짜의 지난 저장본(dayCache)을 버리고 다시 센다.
+export const DONE_RULE = `record-from-${STRICT_FROM}`;
+
 // 수학 확인에서 항상 빼는 이름 (우리 반 탭에서 바꿀 수 있음)
 export const DEFAULT_EXCLUDE_TEXT = '전지현\n테스트';
 
@@ -316,7 +324,8 @@ export function summarizeDay(rows) {
  * - excludeNames 에 있는 이름은 세지 않는다.
  * - 마지막 레벨(FINAL_LEVEL)을 통과한 학생은 모든 레벨을 끝낸 것이라 자동으로 세지 않는다 (누적도 안 셈).
  * - absent({'날짜_번호': true}) 에 있는 학생은 그날 결석이라 그날 명단·누적에서 뺀다 (차감).
- * - '했다' 기준: 그날 분수 연산 마스터에 접속했거나(화면을 켜서 시작), 연습·도전 기록이 있으면.
+ * - '했다' 기준: STRICT_FROM 부터는 그날 연습·도전 기록이 있어야 한다. 접속(화면만 켬)만 한 학생은 '안 함'이고
+ *   missing 에 accessOnly: true 로 표시해 둔다. 그 전 날짜는 예전처럼 접속만 해도 '했다'.
  * - 누적: countStart 부터 이전 등교일까지 등교일마다 '안 한 날'을 학생별로 센다.
  *   cleared[번호] = 'YYYY-MM-DD' 이면 그 날까지의 횟수는 지운 것(해제)이라 다음 날부터 센다.
  *   limit 이상이면 overLimit 에 담는다.
@@ -379,8 +388,9 @@ export async function buildReport({
       date: today, cls, students, finalLevel: FINAL_LEVEL, finalPassed: [...finalPassed], prev, prevRows, accessed: [...accessed], levelUps,
     }).catch(() => {});
   }
+  const strict = (d) => d >= STRICT_FROM;
   const withRecord = new Set(prevRows.map((r) => r.no));
-  const done = new Set([...withRecord, ...accessed]);
+  const done = strict(prev) ? withRecord : new Set([...withRecord, ...accessed]);
 
   const isAbsent = (no, day) => absent[absentKey(day, no)] === true;
 
@@ -399,8 +409,8 @@ export async function buildReport({
   // 이전 등교일에 결석으로 적어 둔 학생은 그날 명단에서 뺀다 (했어도 결석으로 적었으면 뺌)
   const absentPrev = counted.filter((s) => isAbsent(s.no, prev));
   const present = counted.filter((s) => !isAbsent(s.no, prev));
-  const missing = present.filter((s) => !done.has(s.no));
-  const accessOnly = present.filter((s) => accessed.has(s.no) && !withRecord.has(s.no));
+  const missing = present.filter((s) => !done.has(s.no)).map((s) => ({ ...s, accessOnly: accessed.has(s.no) }));
+  const accessOnly = missing.filter((s) => s.accessOnly); // 접속만 하고 안 풀어서 '안 함'
 
   // ---- 레벨·점수 (이전 등교일에 한 학생, 항상 뺄 이름 제외) ----
   const day = summarizeDay(prevRows);
@@ -418,7 +428,6 @@ export async function buildReport({
         levelUp: passed ? { passed, next: nextLevel(passed) } : null,
         scores: d.scores,
         practice: d.practice,
-        accessOnly: !withRecord.has(s.no),
       };
     })
     .sort((a, b) => Number(Boolean(b.levelUp)) - Number(Boolean(a.levelUp))
@@ -429,6 +438,9 @@ export async function buildReport({
   const days = countStart <= prev ? cal.daysBetween(countStart, prev) : [];
   const doneByDay = new Map([[prev, done]]);
   const known = dayCache ? await dayCache.load(client.code) : {};
+  if (known.rule !== DONE_RULE) { // 예전 기준(접속도 '했다')으로 저장한 새 기준 날짜는 버리고 다시 센다
+    for (const d of Object.keys(known)) if (strict(d)) delete known[d];
+  }
   const todo = days.filter((d) => d !== prev && !doneByDay.has(d));
   const fromCache = todo.filter((d) => Array.isArray(known[d]));
   for (const d of fromCache) doneByDay.set(d, new Set(known[d]));
@@ -436,14 +448,14 @@ export async function buildReport({
   const fresh = {};
   for (let i = 0; i < toFetch.length; i += 5) { // 5일씩 묶어서 동시에
     await Promise.all(toFetch.slice(i, i + 5).map(async (d) => {
-      const [rec, acc] = await Promise.all([client.fetchDone(d), client.fetchAccessed(d)]);
+      const [rec, acc] = await Promise.all([client.fetchDone(d), strict(d) ? new Set() : client.fetchAccessed(d)]);
       const set = new Set([...rec, ...acc]);
       doneByDay.set(d, set);
       fresh[d] = [...set];
     }));
   }
   if (!Array.isArray(known[prev]) && days.includes(prev)) fresh[prev] = [...done]; // 이전 등교일은 이미 끝난 날
-  if (dayCache && Object.keys(fresh).length) await dayCache.save(client.code, { ...known, ...fresh });
+  if (dayCache && Object.keys(fresh).length) await dayCache.save(client.code, { ...known, ...fresh, rule: DONE_RULE });
 
   const counts = {};
   for (const s of counted) {
@@ -465,15 +477,15 @@ export async function buildReport({
     className: cls.name,
     dateKey: prev,
     dateLabel: label(prev),
-    missing,
+    missing,      // 안 한 학생 [{no, name, accessOnly}] — accessOnly: 접속은 했지만 풀지 않음
     done: present.length - missing.length,
     total: present.length,
     graduated,   // 마지막 레벨 통과로 자동 제외 [{no, name}]
     excluded,
     absent: absentPrev,   // 이전 등교일 결석으로 뺀 학생 [{no, name}]
     students: counted,    // 세는 학생 전체 (결석 처리 화면용) [{no, name}]
-    accessOnly: accessOnly.length, // 기록은 없지만 접속해서 '했다'로 센 학생 수
-    progress,     // 이전 등교일에 한 학생의 레벨·점수 [{no, name, levelUp:{passed,next}|null, scores:[{level,score}], practice, accessOnly}]
+    accessOnly: accessOnly.length, // 접속만 하고 풀지 않아 '안 함'으로 센 학생 수
+    progress,     // 이전 등교일에 한 학생의 레벨·점수 [{no, name, levelUp:{passed,next}|null, scores:[{level,score}], practice}]
     levelUps: progress.filter((s) => s.levelUp).length,
     countStart,
     limit,

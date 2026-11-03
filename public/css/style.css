@@ -300,6 +300,7 @@ h1, h2, p { margin: 0; }
   gap: 10px;
 }
 .name-chip small { font-size: .5em; font-weight: 700; }
+.name-chip small.access-only { margin-left: .4em; padding: .1em .45em; border-radius: .6em; background: rgba(0,0,0,.08); font-weight: 600; opacity: .8; }
 .name-chip.tappable { cursor: pointer; }
 .all-done { font-size: clamp(30px, 3.5vw, 64px); font-weight: 900; color: var(--done); }
 .math-notes { font-size: clamp(16px, 1.3vw, 22px); text-align: center; }

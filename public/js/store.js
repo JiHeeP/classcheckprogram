@@ -17,7 +17,7 @@ import {
   validateCountStart, validateLimit,
 } from './lib/model.js';
 import {
-  buildReport, MathError, MathPracticeClient, absentKey, DEFAULT_EXCLUDE_TEXT, DEFAULT_COUNT_START, DEFAULT_LIMIT, parseNames,
+  buildReport, MathError, MathPracticeClient, absentKey, DONE_RULE, DEFAULT_EXCLUDE_TEXT, DEFAULT_COUNT_START, DEFAULT_LIMIT, parseNames,
 } from './lib/mathpractice.js';
 import { parseDate, parseOffDays, todayKST } from './lib/schoolday.js';
 
@@ -313,7 +313,7 @@ export function createStore(fs, db, room = 'main') {
   async function getMath(room, { refresh = false, fetchImpl, base, at = new Date() } = {}) {
     if (!room.mathCode) throw new AppError('nocode', '우리 반 탭에서 수학 반 코드를 먼저 적어 주세요');
     const sig = [room.mathCode, room.offDaysText, room.mathExcludeText, room.mathCountStart, room.mathLimit,
-      JSON.stringify(room.mathCleared || {}), JSON.stringify(room.mathAbsent || {}), todayKST(at)].join('|');
+      JSON.stringify(room.mathCleared || {}), JSON.stringify(room.mathAbsent || {}), todayKST(at), DONE_RULE].join('|');
 
     let cached = null;
     try {
