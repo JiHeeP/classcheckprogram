@@ -8,7 +8,8 @@
 //   rooms/{room}/draws/{id}         { title, min, max, createdAt, picks: { 번호: {sid,no,name,at} }, byStudent: { 학생id: 번호 } }
 //   rooms/{room}/cache/math         { sig, savedAt, report }   — 수학 결과 공유 캐시
 //   rooms/{room}/cache/mathDays     { classCode, daysJson }    — 지난 날짜별 '한 학생' (누적용)
-//   rooms/{room}/cache/mathBase     { classCode, baseJson }    — 오늘 받은 반·명단·마지막 레벨 통과·이전 등교일 기록
+//   rooms/{room}/cache/mathBase     { classCode, baseJson }    — 오늘 받은 반·명단·통과 기록·이전 등교일 기록
+//   rooms/{room}/cache/mathPass     { classCode, passJson }    — 학생별 레벨 처음 통과한 날 (새 날짜만 더 읽음)
 //
 // fs 는 Firebase 'firestore' 모듈(브라우저: gstatic, 테스트: npm firebase)을 그대로 넘겨받는다.
 
@@ -40,6 +41,7 @@ export function createStore(fs, db, room = 'main') {
   const mathRef = fs.doc(roomRef, 'cache', 'math');
   const daysRef = fs.doc(roomRef, 'cache', 'mathDays');
   const baseRef = fs.doc(roomRef, 'cache', 'mathBase');
+  const passRef = fs.doc(roomRef, 'cache', 'mathPass');
   const asgRef = (id) => fs.doc(asgCol, id);
   const drawRef = (id) => fs.doc(drawCol, id);
 
@@ -310,6 +312,26 @@ export function createStore(fs, db, room = 'main') {
     },
   };
 
+  /** 학생별 레벨 처음 통과한 날 {through, passes}. 다음에는 through 다음 날 기록만 더 읽는다 */
+  const passCache = {
+    async load(code) {
+      try {
+        const snap = await fs.getDoc(passRef);
+        const d = snap.exists() ? snap.data() : null;
+        return d && d.classCode === code ? JSON.parse(d.passJson || 'null') : null;
+      } catch {
+        return null;
+      }
+    },
+    async save(code, value) {
+      try {
+        await fs.setDoc(passRef, { classCode: code, passJson: JSON.stringify(value), savedAt: Date.now() });
+      } catch {
+        // 저장 못 해도 다음에 다시 읽으면 돼서 계속 진행
+      }
+    },
+  };
+
   async function getMath(room, { refresh = false, fetchImpl, base, at = new Date() } = {}) {
     if (!room.mathCode) throw new AppError('nocode', '우리 반 탭에서 수학 반 코드를 먼저 적어 주세요');
     const sig = [room.mathCode, room.offDaysText, room.mathExcludeText, room.mathCountStart, room.mathLimit,
@@ -339,6 +361,7 @@ export function createStore(fs, db, room = 'main') {
         absent: room.mathAbsent || {},
         dayCache,
         baseCache,
+        passCache,
         refresh,
         now: at,
         fetchImpl,

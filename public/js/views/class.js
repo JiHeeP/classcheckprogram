@@ -159,7 +159,7 @@ function settingsSection(ctx) {
         on: { input: (e) => { s.mathCode = e.target.value.toUpperCase(); touch(); } },
       }),
       el('span.field-hint', '교사 화면 위쪽에 있는 6글자. 비워 두면 수학 확인이 꺼져요.')),
-    el('p.field-hint', '수학을 "했다"로 보는 기준: 그날 연습·도전을 풀어서 기록이 남아야 해요(중간에 그만둔 기록 포함). 접속만 하고 풀지 않았으면 "안 했다"예요.'),
+    el('p.field-hint', '수학을 "했다"로 보는 기준: 그날 자기 최고 레벨(통과한 가장 높은 레벨의 다음 레벨)을 풀어서 기록이 남아야 해요(연습·도전, 중간에 그만둔 기록 포함). 접속만 했거나 더 낮은 레벨만 풀었으면 "안 했다"예요.'),
     el('label.field', el('span.field-label', `등교 안 하는 날 (${offDays.length}일)`),
       el('textarea.input', {
         rows: 6, value: s.offDaysText,

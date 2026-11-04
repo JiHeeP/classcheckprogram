@@ -56,6 +56,13 @@ function schedule(ctx) {
   }, AUTO_REFRESH_MS);
 }
 
+/** 안 한 까닭: 접속만 / 낮은 레벨만 풂 */
+function missReason(s) {
+  if (s.accessOnly) return el('small.miss-reason', '접속만');
+  if (s.lower) return el('small.miss-reason', `${s.lower.did} 함 · ${s.lower.need} 해야`);
+  return null;
+}
+
 const shortDate = (key) => `${Number(key.slice(5, 7))}/${Number(key.slice(8, 10))}`;
 
 async function clearPenalty(ctx, r, s) {
@@ -139,6 +146,7 @@ function progressSection(r) {
   const scoreText = (s) => {
     const parts = s.scores.map((x) => `${x.level} ${x.score}점`);
     if (s.practice.length) parts.push(`${s.practice.join('·')} 연습`);
+    if (s.need) parts.push(`${s.need} 안 함`);
     return parts.length ? parts.join(' · ') : '기록 없음';
   };
   return el('section.progress',
@@ -150,7 +158,7 @@ function progressSection(r) {
         ? el('span.progress-up', s.levelUp.next ? `⬆ ${s.levelUp.passed} 통과 → ${s.levelUp.next}` : `🏁 ${s.levelUp.passed} 통과 (마지막)`)
         : null,
       el('span.progress-score', scoreText(s))))),
-    el('p.muted.small', '점수는 그날 도전에서 레벨마다 가장 높은 점수. 레벨 상승은 그날 처음 통과 점수를 넘어 다음 레벨 도전이 열린 것.'));
+    el('p.muted.small', '점수는 그날 도전에서 레벨마다 가장 높은 점수. 레벨 상승은 그날 처음 통과 점수를 넘어 다음 레벨 도전이 열린 것. "L○ 안 함"은 자기 최고 레벨을 안 풀어서 안 한 것으로 센 학생.'));
 }
 
 export function render(root, ctx, { changedTab } = {}) {
@@ -194,7 +202,7 @@ export function render(root, ctx, { changedTab } = {}) {
   const popup = document.body.classList.contains('popup');
   const chip = (s) => {
     const node = el(popup ? 'span.name-chip' : 'span.name-chip.tappable', { title: popup ? null : '누르면 결석 처리' },
-      el('small', `${s.no}번`), s.name, s.accessOnly ? el('small.access-only', '접속만') : null);
+      el('small', `${s.no}번`), s.name, missReason(s));
     return popup ? node : onTap(node, () => markAbsent(ctx, r, s), { key: `missing:${r.dateKey}:${s.no}` });
   };
   const names = r.missing.length
@@ -203,7 +211,9 @@ export function render(root, ctx, { changedTab } = {}) {
 
   const notes = [
     `${r.total}명 중 ${r.done}명 함${r.absent?.length ? ` (결석 ${r.absent.length}명 뺌)` : ''}`,
-    r.accessOnly ? `접속만 하고 안 푼 ${r.accessOnly}명도 안 함` : '연습·도전을 풀어야 함 (접속만은 안 함)',
+    [r.levelRule ? '자기 최고 레벨을 풀어야 함' : '연습·도전을 풀어야 함',
+      r.accessOnly ? `접속만 ${r.accessOnly}명` : '',
+      r.lowerLevel ? `낮은 레벨만 ${r.lowerLevel}명` : ''].filter(Boolean).join(' · ') + (r.accessOnly || r.lowerLevel ? ' 포함' : ''),
     popup || !r.missing.length ? '' : '이름을 누르면 결석 처리',
     `${r.fetchedDate && r.fetchedDate !== todayKST() ? `${r.fetchedDate.slice(5).replace('-', '/')} ` : ''}${r.fetchedAt} 확인`,
   ];
