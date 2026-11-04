@@ -26,7 +26,7 @@ export function fakeFirestoreFetch(db, opts = {}) {
   const fn = async (input, init = {}) => {
     const url = new URL(typeof input === 'string' ? input : input.url);
     const method = (init.method || 'GET').toUpperCase();
-    calls.push({ url: url.toString(), method });
+    calls.push({ url: url.toString(), method, body: init.body || '' });
     const reply = (body, status = 200) => new Response(JSON.stringify(body), {
       status, headers: { 'Content-Type': 'application/json' },
     });
@@ -49,29 +49,46 @@ export function fakeFirestoreFetch(db, opts = {}) {
       return reply(body);
     }
 
-    // 같음(EQUAL)·이상(GREATER_THAN_OR_EQUAL)·미만(LESS_THAN) 조건, 하나 또는 AND 로 묶인 여러 개
+    // 같음(EQUAL)·초과(GREATER_THAN)·이상(GREATER_THAN_OR_EQUAL)·미만(LESS_THAN) 조건, 하나 또는 AND 로 묶인 여러 개
+    // orderBy(필드·문서 이름) · startAt(커서) · limit 도 흉내 낸다 (나눠 읽기)
     const sq = JSON.parse(init.body).structuredQuery;
     const collection = sq.from[0].collectionId; // results | logs
     const q = sq.where;
     const filters = (q.compositeFilter ? q.compositeFilter.filters : [q]).map((f) => f.fieldFilter);
-    const val = (v) => ('stringValue' in v ? v.stringValue : Number(v.integerValue));
+    const val = (v) => ('stringValue' in v ? v.stringValue : 'referenceValue' in v ? v.referenceValue : Number(v.integerValue));
     const test = (row, f) => {
       const a = row[f.field.fieldPath];
       const b = val(f.value);
       if (f.op === 'EQUAL') return String(a) === String(b);
+      if (f.op === 'GREATER_THAN') return a > b;
       if (f.op === 'GREATER_THAN_OR_EQUAL') return a >= b;
       if (f.op === 'LESS_THAN') return a < b;
       throw new Error(`가짜 Firestore 가 모르는 조건: ${f.op}`);
     };
+    // 문서 이름은 원래 순서로 정해서 여러 번 읽어도 같은 이름
     const source = collection === 'logs'
-      ? (cls.logs || []).map((r) => ({ studentNo: String(r.studentNo), ts: r.ts }))
-      : cls.results.map((r) => ({ level: 'L1', mode: 'practice', score: null, ...r }));
-    const rows = source
-      .filter((r) => filters.every((f) => test(r, f)))
-      .map((r, i) => ({
+      ? (cls.logs || []).map((r, i) => ({ studentNo: String(r.studentNo), ts: r.ts, __name__: `classes/${code}/logs/l${String(i).padStart(5, '0')}` }))
+      : cls.results.map((r, i) => ({ level: 'L1', mode: 'practice', score: null, ...r, __name__: `classes/${code}/results/r${String(i).padStart(5, '0')}` }));
+    const order = (sq.orderBy || []).map((o) => o.field.fieldPath);
+    const cmp = (a, b) => {
+      for (const k of order) {
+        if (a[k] < b[k]) return -1;
+        if (a[k] > b[k]) return 1;
+      }
+      return 0;
+    };
+    let matched = source.filter((r) => filters.every((f) => test(r, f)));
+    if (order.length) matched.sort(cmp);
+    if (sq.startAt) {
+      const at = Object.fromEntries(order.map((k, i) => [k, val(sq.startAt.values[i])]));
+      matched = matched.filter((r) => (sq.startAt.before ? cmp(r, at) >= 0 : cmp(r, at) > 0));
+    }
+    if (sq.limit) matched = matched.slice(0, sq.limit);
+    const rows = matched
+      .map((r) => ({
         document: collection === 'logs'
-          ? doc(`classes/${code}/logs/l${i}`, { studentNo: r.studentNo, ts: r.ts })
-          : doc(`classes/${code}/results/r${i}`, {
+          ? doc(r.__name__, { studentNo: r.studentNo, ts: r.ts })
+          : doc(r.__name__, {
             dateKey: r.dateKey, studentNo: String(r.studentNo), mode: r.mode, level: r.level, score: r.score,
             ...(r.totalQuestions != null ? { totalQuestions: r.totalQuestions } : {}),
           }),
@@ -89,11 +106,11 @@ export const WEEK_DAYS = ['2026-10-08', '2026-10-12', '2026-10-13', '2026-10-14'
  * WEEK_DAYS 동안 모든 학생이 매일 기록을 남기되, misses[번호] 에 적힌 날은 기록이 없다.
  * 4번은 기록 없이 접속만 하고, 12번은 마지막 레벨(L36)을 통과했다.
  */
-export function weekDb(misses = {}) {
+export function weekDb(misses = {}, days = WEEK_DAYS) {
   const students = [...SAMPLE_NAMES.map((name, i) => ({ no: String(i + 1), name })), { no: '99', name: '테스트' }];
   const results = [];
   const logs = [];
-  for (const day of WEEK_DAYS) {
+  for (const day of days) {
     for (const st of students) {
       if ((misses[st.no] || []).includes(day)) continue;
       if (st.no === '4') logs.push({ studentNo: '4', ts: kstMillis(day, 9, 30) });

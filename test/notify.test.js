@@ -187,7 +187,7 @@ test('누적 기준 이상 학생이 카카오톡에 들어가고, 지난 날짜
   assert.equal(r.status, 'sent');
   assert.match(w.sent[0].template.text, /⚠ 누적 3회 이상: 3번 박도윤\(5회\), 5번 정시우\(3회\)/);
   const days = JSON.parse(w.store.get('rooms/main/cache/mathDays').fields.daysJson.stringValue);
-  assert.deepEqual(Object.keys(days).sort(), ['2026-10-08', '2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15']);
+  assert.deepEqual(Object.keys(days).filter((k) => k !== 'rule').sort(), ['2026-10-08', '2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15']);
 });
 
 test('결석으로 적어 둔 학생은 알림에서 빠지고 "결석 N명 제외"가 붙음', async () => {

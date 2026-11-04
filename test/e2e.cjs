@@ -26,9 +26,12 @@ async function main() {
   const { fakeFirestoreFetch, sampleDb, SAMPLE_NAMES } = await import('./fake-firestore.js');
   const { SchoolCalendar, todayKST } = await import('../public/js/lib/schoolday.js');
   const prev = new SchoolCalendar().prevSchoolDay(todayKST());
-  // 12번 오수아는 마지막 레벨(L36)을 통과해서 자동으로 빠지고, 안 한 학생은 3번·7번 2명
-  const missingCount = 2;
-  const fakeMath = fakeFirestoreFetch(sampleDb(prev));
+  // 12번 오수아는 마지막 레벨(L36)을 통과해서 자동으로 빠지고,
+  // 안 한 학생은 3번·4번(접속만)·6번(L5 까지 통과했는데 L3 만 풂)·7번 4명
+  const missingCount = 4;
+  const mathDb = sampleDb(prev);
+  for (const level of ['L3', 'L4', 'L5']) mathDb.TEST01.results.push({ dateKey: '2026-09-01', studentNo: '6', mode: 'challenge', level, score: 200 });
+  const fakeMath = fakeFirestoreFetch(mathDb);
 
   // 프록시가 있는 환경이면 localhost 만 프록시를 거치지 않게 (Playwright 의 proxy 옵션은 localhost 도 프록시로 보냄)
   const args = process.env.HTTPS_PROXY
@@ -150,13 +153,16 @@ async function main() {
   await page.locator('.name-chip').first().waitFor({ timeout: 10000 });
   const names = await page.locator('.name-chip').allTextContents();
   assert(names.length === missingCount && names.join(',').includes('박도윤'), `안 한 학생 ${missingCount}명: ${names.join(', ')}`);
+  assert(names.some((t) => t.includes('최하은') && t.includes('접속만')), '접속만 한 학생은 안 함 + "접속만" 표시');
+  assert(names.some((t) => t.includes('강지유') && t.includes('L3 함 · L6 해야')), '자기 최고 레벨(L6)보다 낮은 L3 만 풀면 안 함 + 까닭 표시');
   const skip = await page.locator('.math-notes', { hasText: '세지 않음' }).textContent();
   assert(skip.includes('오수아') && skip.includes('테스트'), `모든 레벨 통과·제외 학생은 빠짐 (${skip.trim()})`);
   const prog = await page.locator('.progress-row').allTextContents();
-  assert(prog.length === 15, `레벨·점수: 한 학생 15명 (${prog.length}명)`);
-  assert(await page.locator('.progress-row.up').count() === 13, '그날 처음 L3 를 통과한 13명은 레벨 상승');
+  assert(prog.length === 14, `레벨·점수: 한 학생 14명 (${prog.length}명)`);
+  assert(await page.locator('.progress-row.up').count() === 12, '그날 처음 L3 를 통과한 12명은 레벨 상승');
+  assert(prog.some((t) => t.includes('강지유') && t.includes('L6 안 함')), '레벨·점수에도 자기 최고 레벨을 안 한 것 표시');
   assert(prog[0].includes('L3 통과 → L4') && prog[0].includes('L3 100점'), `레벨 상승·점수 같이 보임 (${prog[0]})`);
-  assert(prog.some((t) => t.includes('L3 연습')) && prog.some((t) => t.includes('접속만')), '연습만·접속만도 구분');
+  assert(prog.some((t) => t.includes('L3 연습')) && !prog.some((t) => t.includes('최하은')), '연습만 구분, 접속만 한 학생은 레벨·점수에 없음');
   await shot(page, '03-math');
 
   console.log('누적 벌 대상: 설정 → 큰 이름 → 해제');
@@ -244,7 +250,7 @@ async function main() {
   const popNames = await pop.locator('.name-chip').allTextContents();
   assert(popNames.length === missingCount && popNames.join(',').includes('조하준'), `팝업에 안 한 학생 ${missingCount}명: ${popNames.join(', ')}`);
   await pop.locator('.progress-row.up').first().waitFor({ timeout: 10000 });
-  assert(await pop.locator('.progress-row').count() === 15, '팝업에도 레벨·점수가 같이 보임');
+  assert(await pop.locator('.progress-row').count() === 14, '팝업에도 레벨·점수가 같이 보임');
   const popUp = await pop.locator('.progress-row.up').first().textContent();
   assert(popUp.includes('L3 통과 → L4') && popUp.includes('100점'), `팝업 레벨 상승·점수 (${popUp})`);
   await shot(pop, '05-popup');

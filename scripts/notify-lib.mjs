@@ -141,6 +141,29 @@ function makeBaseCache(config, room, fetchImpl, readOnly) {
   };
 }
 
+/** 학생별 레벨 처음 통과한 날 (사이트와 같은 문서 rooms/{room}/cache/mathPass) */
+function makePassCache(config, room, fetchImpl, readOnly) {
+  const path = `rooms/${encodeURIComponent(room)}/cache/mathPass`;
+  return {
+    async load(code) {
+      try {
+        const d = await fsGet(config, path, fetchImpl);
+        return d && d.classCode === code ? JSON.parse(d.passJson || 'null') : null;
+      } catch {
+        return null;
+      }
+    },
+    async save(code, value) {
+      if (readOnly) return;
+      try {
+        await fsSet(config, path, { classCode: code, passJson: JSON.stringify(value), savedAt: Date.now() }, fetchImpl);
+      } catch {
+        // 저장 못 해도 다음에 다시 읽으면 돼요
+      }
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // 토큰 암호화 보관
 // ---------------------------------------------------------------------------
@@ -250,6 +273,7 @@ export async function runNotify({
     absent: roomData.mathAbsent,
     dayCache: makeDayCache(config, room, fetchImpl, dryRun), // 연습 실행은 저장하지 않음
     baseCache: makeBaseCache(config, room, fetchImpl, dryRun),
+    passCache: makePassCache(config, room, fetchImpl, dryRun),
     now,
     fetchImpl,
   });
