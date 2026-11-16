@@ -59,10 +59,14 @@ export const DEFAULT_LIMIT = 3;
 //   STRICT_FROM ~ : 연습·도전 기록이 있어야 '했다'. 접속만 한 학생은 '안 함' (11/3 에 바뀜, 11/2 부터)
 //   LEVEL_FROM ~  : 게다가 '자기 최고 레벨'(그날 전까지 통과한 가장 높은 레벨의 다음 레벨)을 풀어야 '했다'.
 //                   그보다 낮은 레벨만 풀었으면 '안 함' (11/4 에 바뀜, 11/3 부터)
+//   SCORE_FROM ~  : 게다가 자기 최고 레벨을 '도전'해서 전날 점수를 넘어야 '했다'.
+//                   전날 점수 = 그 레벨을 도전한 가장 최근 날(그날 전)의 가장 높은 점수. 같으면 못 넘은 것.
+//                   그 레벨 도전이 처음이면 도전만 끝까지 하면 '했다'. 연습만 했으면 '안 함' (11/16 에 바뀜, 11/13 부터)
 export const STRICT_FROM = '2026-11-02';
 export const LEVEL_FROM = '2026-11-03';
+export const SCORE_FROM = '2026-11-13';
 // 기준이 바뀌면 이 값도 바뀐다. 결과 캐시와, 새 기준 날짜의 지난 저장본(dayCache)을 버리고 다시 센다.
-export const DONE_RULE = `record-from-${STRICT_FROM}-level-from-${LEVEL_FROM}`;
+export const DONE_RULE = `record-from-${STRICT_FROM}-level-from-${LEVEL_FROM}-score-from-${SCORE_FROM}`;
 
 // 수학 확인에서 항상 빼는 이름 (우리 반 탭에서 바꿀 수 있음)
 export const DEFAULT_EXCLUDE_TEXT = '전지현\n테스트';
@@ -164,6 +168,28 @@ export function addPasses(passes, rows) {
     if (!mine[r.level] || r.dateKey < mine[r.level]) mine[r.level] = r.dateKey;
   }
   return passes;
+}
+
+/**
+ * 기록 → 날짜별 가장 높은 도전 점수에 더하기. best = {번호: {레벨: {날짜: 점수}}}
+ * (중도 포기·문제 수 미달은 점수로 안 침)
+ */
+export function addBest(best, rows) {
+  for (const r of rows) {
+    const score = challengeScore(r);
+    if (score == null || !r.dateKey || !r.level) continue;
+    const byLevel = best[r.no] || (best[r.no] = {});
+    const byDate = byLevel[r.level] || (byLevel[r.level] = {});
+    if (!(byDate[r.dateKey] >= score)) byDate[r.dateKey] = score;
+  }
+  return best;
+}
+
+/** day 전에 그 레벨을 도전한 가장 최근 날과 그날 가장 높은 점수 {date, score} (없으면 null) */
+export function lastScore(byDate, day) {
+  let date = '';
+  for (const d of Object.keys(byDate || {})) if (d < day && d > date) date = d;
+  return date ? { date, score: byDate[date] } : null;
 }
 
 /**
@@ -343,46 +369,69 @@ export function summarizeDay(rows) {
   return out;
 }
 
+const isObj = (x) => Boolean(x) && typeof x === 'object';
+
 /**
- * 통과 기록 {번호: {레벨: 처음 통과한 날}} 을 받아 온다.
- * passCache({load(code)→{through, passes}|null, save(code, {through, passes})}) 가 있으면
+ * 통과 기록 passes {번호: {레벨: 처음 통과한 날}} 과 날짜별 도전 점수 best {번호: {레벨: {날짜: 점수}}} 를 받아 온다.
+ * passCache({load(code)→{through, passes, best}|null, save(code, {through, passes, best})}) 가 있으면
  * 저장해 둔 것에 through 다음 날부터의 기록만 더한다 (처음 한 번만 반 전체 도전 기록을 읽음).
+ * 점수 기록(best)이 없는 예전 저장본이면 한 번 반 전체를 다시 읽는다.
  */
 async function loadPasses(client, passCache, today) {
   const saved = passCache ? await passCache.load(client.code).catch(() => null) : null;
-  let passes;
-  if (saved && typeof saved.through === 'string' && saved.passes && typeof saved.passes === 'object') {
-    passes = addPasses(saved.passes, await client.fetchResultsSince(saved.through));
+  let passes, best;
+  if (saved && typeof saved.through === 'string' && isObj(saved.passes) && isObj(saved.best)) {
+    const rows = await client.fetchResultsSince(saved.through);
+    passes = addPasses(saved.passes, rows);
+    best = addBest(saved.best, rows);
   } else {
-    passes = addPasses({}, await client.fetchChallengeHistory());
+    const rows = await client.fetchChallengeHistory();
+    passes = addPasses({}, rows);
+    best = addBest({}, rows);
   }
   // 오늘은 아직 안 끝났으니 어제까지 읽은 것으로 적어 둔다 (다음에 오늘 것부터 다시 읽음)
-  if (passCache) await passCache.save(client.code, { through: addDays(today, -1), passes }).catch(() => {});
-  return passes;
+  if (passCache) await passCache.save(client.code, { through: addDays(today, -1), passes, best }).catch(() => {});
+  return { passes, best };
 }
 
 const isStrict = (day) => day >= STRICT_FROM;
 const isLevelRule = (day) => day >= LEVEL_FROM;
+const isScoreRule = (day) => day >= SCORE_FROM;
 
 /**
  * day 하루의 기록·접속으로 '했다'인 학생과, 안 한 까닭.
- *   rows: 그날 기록, accessed: 그날 접속한 번호 Set, passes: 통과 기록
- *   → { done: Set, lower: Map 번호 → {did, need} } (lower: 자기 최고 레벨보다 낮은 레벨만 풂)
+ *   rows: 그날 기록, accessed: 그날 접속한 번호 Set, passes: 통과 기록, best: 날짜별 도전 점수
+ *   → { done: Set, lower: Map 번호 → {did, need}, notBeat: Map 번호 → {level, score, prev, prevDate} }
+ *     lower: 자기 최고 레벨보다 낮은 레벨만 풂
+ *     notBeat: 자기 최고 레벨은 풀었지만 전날 점수를 못 넘음 (score 가 null 이면 연습만 하고 도전은 안 함)
  */
-export function judgeDay(day, rows, accessed, passes) {
+export function judgeDay(day, rows, accessed, passes, best = {}) {
   const withRecord = new Set(rows.map((r) => r.no));
-  if (!isStrict(day)) return { done: new Set([...withRecord, ...accessed]), lower: new Map() };
-  if (!isLevelRule(day)) return { done: withRecord, lower: new Map() };
+  if (!isStrict(day)) return { done: new Set([...withRecord, ...accessed]), lower: new Map(), notBeat: new Map() };
+  if (!isLevelRule(day)) return { done: withRecord, lower: new Map(), notBeat: new Map() };
   const top = new Map(); // 번호 → 그날 푼 가장 높은 레벨 순서
   for (const r of rows) top.set(r.no, Math.max(top.get(r.no) ?? -1, levelIndex(r.level)));
   const done = new Set();
   const lower = new Map();
+  const notBeat = new Map();
   for (const [no, i] of top) {
     const need = requiredLevel(passes[no], day);
-    if (!need || i >= LEVEL_ORDER.indexOf(need)) done.add(no);
-    else lower.set(no, { did: LEVEL_ORDER[i], need });
+    const needIndex = LEVEL_ORDER.indexOf(need);
+    if (!need || i > needIndex) done.add(no);
+    else if (i < needIndex) lower.set(no, { did: LEVEL_ORDER[i], need });
+    else if (!isScoreRule(day)) done.add(no);
+    else {
+      let score = null; // 그날 그 레벨 도전에서 가장 높은 점수
+      for (const r of rows) {
+        const s = r.no === no && r.level === need ? challengeScore(r) : null;
+        if (s != null && (score == null || s > score)) score = s;
+      }
+      const prev = lastScore(best[no]?.[need], day);
+      if (score != null && (!prev || score > prev.score)) done.add(no);
+      else notBeat.set(no, { level: need, score, prev: prev ? prev.score : null, prevDate: prev ? prev.date : '' });
+    }
   }
-  return { done, lower };
+  return { done, lower, notBeat };
 }
 
 /**
@@ -391,8 +440,9 @@ export function judgeDay(day, rows, accessed, passes) {
  * - excludeNames 에 있는 이름은 세지 않는다.
  * - 마지막 레벨(FINAL_LEVEL)을 통과한 학생은 모든 레벨을 끝낸 것이라 자동으로 세지 않는다 (누적도 안 셈).
  * - absent({'날짜_번호': true}) 에 있는 학생은 그날 결석이라 그날 명단·누적에서 뺀다 (차감).
- * - '했다' 기준은 날짜마다 다르다 (STRICT_FROM·LEVEL_FROM 위 설명, judgeDay).
- *   안 한 학생에는 까닭을 붙인다: accessOnly(접속만), lower({did, need}: 낮은 레벨만 풂)
+ * - '했다' 기준은 날짜마다 다르다 (STRICT_FROM·LEVEL_FROM·SCORE_FROM 위 설명, judgeDay).
+ *   안 한 학생에는 까닭을 붙인다: accessOnly(접속만), lower({did, need}: 낮은 레벨만 풂),
+ *   notBeat({level, score, prev, prevDate}: 전날 점수를 못 넘음, score null 이면 도전 안 함)
  * - 누적: countStart 부터 이전 등교일까지 등교일마다 '안 한 날'을 학생별로 센다.
  *   cleared[번호] = 'YYYY-MM-DD' 이면 그 날까지의 횟수는 지운 것(해제)이라 다음 날부터 센다.
  *   limit 이상이면 overLimit 에 담는다.
@@ -418,15 +468,17 @@ export async function buildReport({
   if (baseCache && !refresh) {
     saved = await baseCache.load(client.code).catch(() => null);
     // 통과 기록이 없던 예전 형식이면 새로 받는다
-    if (saved?.date !== today || !Array.isArray(saved.prevRows) || !saved.passes || typeof saved.passes !== 'object') saved = null;
+    if (saved?.date !== today || !Array.isArray(saved.prevRows) || !isObj(saved.passes) || !isObj(saved.best)) saved = null;
   }
-  let cls, students, passes;
+  let cls, students, passes, best;
   if (saved) {
-    ({ cls, students, passes } = saved);
+    ({ cls, students, passes, best } = saved);
   } else {
-    [cls, students, passes] = await Promise.all([
+    let history;
+    [cls, students, history] = await Promise.all([
       client.fetchClass(), client.fetchStudents(), loadPasses(client, passCache, today),
     ]);
+    ({ passes, best } = history);
   }
   const cal = new SchoolCalendar([...offDays, ...cls.offDays]);
   const prev = cal.prevSchoolDay(today);
@@ -441,11 +493,11 @@ export async function buildReport({
   }
   if (baseCache && !(saved && saved.prev === prev)) {
     await baseCache.save(client.code, {
-      date: today, cls, students, passes, prev, prevRows, accessed: [...accessed],
+      date: today, cls, students, passes, best, prev, prevRows, accessed: [...accessed],
     }).catch(() => {});
   }
   const withRecord = new Set(prevRows.map((r) => r.no));
-  const { done, lower } = judgeDay(prev, prevRows, accessed, passes);
+  const { done, lower, notBeat } = judgeDay(prev, prevRows, accessed, passes, best);
 
   const isAbsent = (no, day) => absent[absentKey(day, no)] === true;
 
@@ -468,6 +520,7 @@ export async function buildReport({
     ...s,
     accessOnly: !withRecord.has(s.no) && accessed.has(s.no), // 접속만 하고 안 풂
     lower: lower.get(s.no) || null,                           // 자기 최고 레벨보다 낮은 레벨만 풂 {did, need}
+    notBeat: notBeat.get(s.no) || null,                       // 전날 점수를 못 넘음 {level, score|null, prev|null, prevDate}
   }));
   const accessOnly = missing.filter((s) => s.accessOnly);
 
@@ -486,6 +539,7 @@ export async function buildReport({
         scores: d.scores,
         practice: d.practice,
         need: lower.get(s.no)?.need || '', // 자기 최고 레벨을 안 풀었으면 그 레벨
+        notBeat: notBeat.get(s.no) || null, // 자기 최고 레벨에서 전날 점수를 못 넘었으면 {level, score, prev, prevDate}
       };
     })
     .sort((a, b) => Number(Boolean(b.levelUp)) - Number(Boolean(a.levelUp))
@@ -507,7 +561,7 @@ export async function buildReport({
   for (let i = 0; i < toFetch.length; i += 5) { // 5일씩 묶어서 동시에
     await Promise.all(toFetch.slice(i, i + 5).map(async (d) => {
       const [rows, acc] = await Promise.all([client.fetchDayResults(d), isStrict(d) ? new Set() : client.fetchAccessed(d)]);
-      const set = judgeDay(d, rows, acc, passes).done;
+      const set = judgeDay(d, rows, acc, passes, best).done;
       doneByDay.set(d, set);
       fresh[d] = [...set];
     }));
@@ -535,7 +589,7 @@ export async function buildReport({
     className: cls.name,
     dateKey: prev,
     dateLabel: label(prev),
-    missing,      // 안 한 학생 [{no, name, accessOnly, lower:{did,need}|null}]
+    missing,      // 안 한 학생 [{no, name, accessOnly, lower:{did,need}|null, notBeat:{level,score,prev,prevDate}|null}]
     done: present.length - missing.length,
     total: present.length,
     graduated,   // 마지막 레벨 통과로 자동 제외 [{no, name}]
@@ -544,7 +598,9 @@ export async function buildReport({
     students: counted,    // 세는 학생 전체 (결석 처리 화면용) [{no, name}]
     accessOnly: accessOnly.length, // 접속만 하고 풀지 않아 '안 함'으로 센 학생 수
     lowerLevel: missing.filter((s) => s.lower).length, // 자기 최고 레벨보다 낮은 레벨만 풀어 '안 함'으로 센 학생 수
+    notBeatCount: missing.filter((s) => s.notBeat).length, // 전날 점수를 못 넘어(또는 도전 안 해) '안 함'으로 센 학생 수
     levelRule: isLevelRule(prev), // 이전 등교일에 '자기 최고 레벨' 기준을 쓰는지
+    scoreRule: isScoreRule(prev), // 이전 등교일에 '전날 점수 넘기' 기준을 쓰는지
     progress,     // 이전 등교일에 기록 있는 학생의 레벨·점수 [{no, name, levelUp:{passed,next}|null, scores:[{level,score}], practice, need}]
     levelUps: progress.filter((s) => s.levelUp).length,
     countStart,

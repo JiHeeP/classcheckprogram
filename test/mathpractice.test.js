@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildReport, MathError, MathPracticeClient, parseNames, kstDayRange, absentKey, FINAL_LEVEL, FINAL_PASS_SCORE,
-  STRICT_FROM, LEVEL_FROM, DONE_RULE, requiredLevel, addPasses,
+  STRICT_FROM, LEVEL_FROM, SCORE_FROM, DONE_RULE, requiredLevel, addPasses, addBest, lastScore, judgeDay,
 } from '../public/js/lib/mathpractice.js';
 import { SchoolCalendar } from '../public/js/lib/schoolday.js';
 import { fakeFirestoreFetch, sampleDb, kstMillis, weekDb, WEEK_DAYS as DAYS } from './fake-firestore.js';
@@ -189,6 +189,102 @@ test('통과 기록은 저장해 두고 새 날짜 것만 더 읽음 (나눠 읽
   assert.equal(saved.passes['2'].L21, '2026-11-04');
   assert.ok(!r2.missing.some((s) => s.no === '2'), '11/4 에 L21 을 풀었으니 했다');
   assert.deepEqual(r1.missing.map((s) => s.no), ['2', '3', '4', '7']);
+});
+
+// ---------------------------------------------------------------------------
+// 전날 점수 넘기 (SCORE_FROM 부터): 자기 최고 레벨을 도전해서 전날 점수를 넘어야 '했다'
+// ---------------------------------------------------------------------------
+
+test('날짜별 가장 높은 도전 점수와, 그날 전 가장 최근 도전', () => {
+  const best = addBest({}, [
+    { no: '1', dateKey: '2026-11-10', mode: 'challenge', level: 'L21', score: 150 },
+    { no: '1', dateKey: '2026-11-10', mode: 'challenge', level: 'L21', score: 170 },
+    { no: '1', dateKey: '2026-11-12', mode: 'challenge', level: 'L21', score: 160 },
+    { no: '1', dateKey: '2026-11-12', mode: 'challenge', level: 'L21', score: 300, totalQuestions: 5 }, // 중도 포기
+    { no: '1', dateKey: '2026-11-12', mode: 'free', level: 'L21', score: null },                       // 연습
+  ]);
+  assert.deepEqual(best, { 1: { L21: { '2026-11-10': 170, '2026-11-12': 160 } } });
+  assert.deepEqual(lastScore(best['1'].L21, '2026-11-13'), { date: '2026-11-12', score: 160 }, '가장 높은 점수가 아니라 가장 최근 날');
+  assert.deepEqual(lastScore(best['1'].L21, '2026-11-12'), { date: '2026-11-10', score: 170 }, '그날 것은 안 봄');
+  assert.equal(lastScore(best['1'].L21, '2026-11-10'), null);
+  assert.equal(lastScore(undefined, '2026-11-13'), null);
+});
+
+test('전날 점수 넘기: SCORE_FROM 전 날짜는 같은 점수여도 했다, 그 뒤는 같으면 안 함', () => {
+  assert.equal(SCORE_FROM, '2026-11-13');
+  const passes = { 1: { L20: '2026-10-20' } };
+  const row = (dateKey, score) => ({ no: '1', dateKey, mode: 'challenge', level: 'L21', score });
+  const best = addBest({}, [row('2026-11-11', 170), row('2026-11-12', 170)]);
+  assert.ok(judgeDay('2026-11-12', [row('2026-11-12', 170)], new Set(), passes, best).done.has('1'));
+  const j = judgeDay('2026-11-13', [row('2026-11-13', 170)], new Set(), passes, best);
+  assert.ok(!j.done.has('1'));
+  assert.deepEqual(j.notBeat.get('1'), { level: 'L21', score: 170, prev: 170, prevDate: '2026-11-12' });
+  assert.ok(judgeDay('2026-11-13', [row('2026-11-13', 171)], new Set(), passes, best).done.has('1'), '1점이라도 넘으면 했다');
+});
+
+// 한국 시간 2026-11-16(월) 08:30 → 이전 등교일 11/13(금)
+const NOV16_AM = new Date('2026-11-15T23:30:00Z');
+
+function scoreDb() {
+  const db = sampleDb('2026-11-13');
+  const res = db.TEST01.results;
+  for (const no of ['1', '2', '5', '6', '8', '9', '10']) {
+    for (const r of res.filter((x) => x.studentNo === no)) r.dateKey = '2026-10-01'; // 이날 L3 기록은 옛날로
+    res.push({ dateKey: '2026-10-20', studentNo: no, mode: 'challenge', level: 'L20', score: 190 }); // L20 통과 → L21 해야
+  }
+  const ch = (dateKey, studentNo, score, extra = {}) => ({ dateKey, studentNo, mode: 'challenge', level: 'L21', score, ...extra });
+  res.push(
+    ch('2026-11-12', '1', 150), ch('2026-11-13', '1', 160),                         // 넘음 → 했다
+    ch('2026-11-12', '2', 170), ch('2026-11-13', '2', 170), ch('2026-11-13', '2', 165), // 같음 → 안 함
+    ch('2026-11-10', '5', 180), ch('2026-11-13', '5', 175),                         // 11/12 안 함 → 11/10 점수와 비교 → 안 함
+    ch('2026-11-12', '6', 150), { dateKey: '2026-11-13', studentNo: '6', mode: 'free', level: 'L21', score: null }, // 연습만 → 안 함
+    ch('2026-11-13', '8', 100),                                                     // L21 도전 처음 → 했다
+    ch('2026-11-12', '9', 150), ch('2026-11-13', '9', 200, { totalQuestions: 5 }),  // 중도 포기만 → 안 함
+    ch('2026-11-12', '10', 150), ch('2026-11-13', '10', 190),                       // 통과(186점 이상) → 했다
+  );
+  return db;
+}
+
+test('전날 점수 넘기: 자기 최고 레벨 도전에서 전날 점수를 넘어야 했다', async () => {
+  const r = await buildReport({ classCode: 'TEST01', now: NOV16_AM, excludeNames: ['테스트'], fetchImpl: fakeFirestoreFetch(scoreDb()) });
+  assert.equal(r.dateKey, '2026-11-13');
+  assert.equal(r.scoreRule, true);
+  assert.deepEqual(r.missing.map((s) => s.no), ['2', '3', '4', '5', '6', '7', '9']);
+  const by = Object.fromEntries(r.missing.map((s) => [s.no, s]));
+  assert.deepEqual(by['2'].notBeat, { level: 'L21', score: 170, prev: 170, prevDate: '2026-11-12' }, '같은 점수는 못 넘은 것');
+  assert.deepEqual(by['5'].notBeat, { level: 'L21', score: 175, prev: 180, prevDate: '2026-11-10' }, '전날 안 했으면 가장 최근 도전 날과 비교');
+  assert.deepEqual(by['6'].notBeat, { level: 'L21', score: null, prev: 150, prevDate: '2026-11-12' }, '연습만');
+  assert.equal(by['9'].notBeat.score, null, '중도 포기는 점수로 안 침');
+  assert.equal(by['3'].notBeat, null);
+  assert.equal(r.notBeatCount, 4);
+  const prog = Object.fromEntries(r.progress.map((s) => [s.no, s]));
+  assert.equal(prog['1'].notBeat, null);
+  assert.equal(prog['2'].notBeat.prev, 170);
+  assert.equal(prog['10'].levelUp.passed, 'L21');
+});
+
+test('전날 점수 넘기 누적: 11/12 는 그 레벨만 풀면 했다, 11/13 부터 못 넘은 날을 센다', async () => {
+  const r = await buildReport({
+    classCode: 'TEST01', now: NOV16_AM, excludeNames: ['테스트'], countStart: '2026-11-12', fetchImpl: fakeFirestoreFetch(scoreDb()),
+  });
+  assert.equal(r.countedDays, 2);
+  assert.equal(r.counts['2'], 1, '11/12 는 했다, 11/13 못 넘음');
+  assert.equal(r.counts['5'], 2, '11/12 기록 없음 + 11/13 못 넘음');
+  assert.equal(r.counts['1'], 0);
+});
+
+test('점수 기록이 없는 예전 통과 저장본이면 한 번 반 전체를 다시 읽고, 그 뒤로는 새 날짜만', async () => {
+  let saved = { through: '2026-11-12', passes: { 1: { L20: '2026-10-20' } } }; // best 없음 (예전 형식)
+  const passCache = { load: async () => saved && JSON.parse(JSON.stringify(saved)), save: async (_c, v) => { saved = JSON.parse(JSON.stringify(v)); } };
+  const since = (f) => f.calls.filter((c) => c.method === 'POST' && c.body.includes('"op":"GREATER_THAN"'));
+  const first = fakeFirestoreFetch(scoreDb());
+  const r = await buildReport({ classCode: 'TEST01', now: NOV16_AM, excludeNames: ['테스트'], fetchImpl: first, passCache });
+  assert.equal(since(first).length, 0, '반 전체를 다시 읽음');
+  assert.equal(saved.best['2'].L21['2026-11-12'], 170);
+  assert.ok(r.missing.some((s) => s.no === '2'));
+  const second = fakeFirestoreFetch(scoreDb());
+  await buildReport({ classCode: 'TEST01', now: new Date('2026-11-16T23:30:00Z'), excludeNames: ['테스트'], fetchImpl: second, passCache });
+  assert.equal(since(second).length, 1, '다음에는 새 날짜만');
 });
 
 test('접속 기록의 하루 범위는 한국 시간 0시~24시', async () => {
