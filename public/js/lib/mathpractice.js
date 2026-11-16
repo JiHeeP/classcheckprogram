@@ -61,10 +61,10 @@ export const DEFAULT_LIMIT = 3;
 //                   그보다 낮은 레벨만 풀었으면 '안 함' (11/4 에 바뀜, 11/3 부터)
 //   SCORE_FROM ~  : 게다가 자기 최고 레벨을 '도전'해서 전날 점수를 넘어야 '했다'.
 //                   전날 점수 = 그 레벨을 도전한 가장 최근 날(그날 전)의 가장 높은 점수. 같으면 못 넘은 것.
-//                   그 레벨 도전이 처음이면 도전만 끝까지 하면 '했다'. 연습만 했으면 '안 함' (11/16 에 바뀜, 11/17 부터)
+//                   그 레벨 도전이 처음이면 도전만 끝까지 하면 '했다'. 연습만 했으면 '안 함' (11/16 에 바뀜, 11/16 부터 — 11/17 아침 화면부터 보임)
 export const STRICT_FROM = '2026-11-02';
 export const LEVEL_FROM = '2026-11-03';
-export const SCORE_FROM = '2026-11-17';
+export const SCORE_FROM = '2026-11-16';
 // 기준이 바뀌면 이 값도 바뀐다. 결과 캐시와, 새 기준 날짜의 지난 저장본(dayCache)을 버리고 다시 센다.
 export const DONE_RULE = `record-from-${STRICT_FROM}-level-from-${LEVEL_FROM}-score-from-${SCORE_FROM}`;
 
