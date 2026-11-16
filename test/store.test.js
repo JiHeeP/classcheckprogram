@@ -103,6 +103,31 @@ test('과제: 만들기 → 체크 → 반복 → 해제 → 이름 바꾸기 �
   await waitState(store, (st) => st.assignments.length === 0);
 });
 
+test('과제: 중간(노랑) → 통과(초록) → 해제, 한 곳에만 남음', { skip }, async () => {
+  const store = freshStore();
+  const roster = await withRoster(store);
+  const id = await store.createAssignment('받아쓰기');
+  await waitState(store, (s) => s.assignments.length === 1);
+  const sid = roster[0].id;
+
+  await store.setMark(id, sid, 1);
+  let s = await waitState(store, (st) => Boolean(st.assignments[0].half[sid]));
+  assert.ok(!s.assignments[0].done[sid]);
+
+  await store.setMark(id, sid, 2);
+  s = await waitState(store, (st) => Boolean(st.assignments[0].done[sid]));
+  assert.ok(!s.assignments[0].half[sid]);
+
+  await store.setMark(id, sid, 1);
+  await waitState(store, (st) => Boolean(st.assignments[0].half[sid]) && !st.assignments[0].done[sid]);
+  await store.resetAssignment(id);
+  await waitState(store, (st) => !Object.keys(st.assignments[0].half).length && !Object.keys(st.assignments[0].done).length);
+
+  await store.setMark(id, sid, 2);
+  await store.setMark(id, sid, 0);
+  await waitState(store, (st) => !st.assignments[0].done[sid] && !st.assignments[0].half[sid]);
+});
+
 test('18명이 동시에 체크해도 모두 남음', { skip }, async () => {
   const store = freshStore();
   const roster = await withRoster(store);

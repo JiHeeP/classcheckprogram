@@ -1,8 +1,8 @@
-// 01 과제 체크: 과제마다 학생 이름 칸, 터치하면 완료 / 다시 터치하면 해제
+// 01 과제 체크: 과제마다 학생 이름 칸. 한 번 터치 = 중간(노랑), 두 번 = 통과(초록), 세 번 = 해제
 // - '저장하고 새 과제': 지금 과제를 지난 기록으로 보내고 바로 새 과제를 만든다
 // - '지난 기록': 저장한 과제를 날짜별로 보고, 늦게 낸 학생은 그 안에서 체크하거나 다시 열 수 있다
 import { el, onTap, formBox, confirmBox, menuBox, toast } from '../ui.js';
-import { sortByNo, assignmentSummary } from '../lib/model.js';
+import { sortByNo, assignmentSummary, markOf, nextMark } from '../lib/model.js';
 import { label, todayKST } from '../lib/schoolday.js';
 import { noRoster, chipBar } from './common.js';
 
@@ -38,7 +38,7 @@ async function saveAndNew(ctx, a, students) {
   const sum = assignmentSummary(a, students);
   try {
     await ctx.store.closeAssignment(a.id);
-    toast(`'${a.title}' 저장했어요 (${sum.doneCount}/${sum.total}). 지난 기록에서 볼 수 있어요.`, 'ok', 4000);
+    toast(`'${a.title}' 저장했어요 (통과 ${sum.doneCount}/${sum.total}${sum.halfCount ? ` · 중간 ${sum.halfCount}` : ''}). 지난 기록에서 볼 수 있어요.`, 'ok', 4000);
   } catch (e) {
     ctx.fail(e);
     return;
@@ -64,7 +64,7 @@ async function assignmentMenu(ctx, a) {
     } else if (choice === 'reopen') {
       await reopen(ctx, a);
     } else if (choice === 'reset') {
-      if (await confirmBox('체크를 모두 지울까요?', `'${a.title}'의 완료 표시가 모두 사라져요.`, { ok: '모두 지우기', danger: true })) {
+      if (await confirmBox('체크를 모두 지울까요?', `'${a.title}'의 중간·통과 표시가 모두 사라져요.`, { ok: '모두 지우기', danger: true })) {
         await ctx.store.resetAssignment(a.id);
       }
     } else if (choice === 'delete') {
@@ -86,35 +86,42 @@ async function reopen(ctx, a) {
   ctx.rerender();
 }
 
-/** 이름 칸 + 아직 안 한 학생 줄 */
+const TILE_CLASS = ['', '.half', '.done'];
+const TILE_MARK = ['', '△', '✓'];
+const TILE_STATE = ['안 함', '중간', '통과'];
+
+/** 이름 칸 + 중간·아직 안 한 학생 줄 */
 function board(ctx, a, students) {
   const grid = el('div.tile-grid', { style: { '--cols': gridColumns(students.length) } },
     students.map((s) => {
-      const done = Boolean(a.done[s.id]);
-      const tile = el(`button.tile${done ? '.done' : ''}`, {
+      const mark = markOf(a, s.id);
+      const tile = el(`button.tile${TILE_CLASS[mark]}`, {
         type: 'button',
-        'aria-pressed': String(done),
-        dataset: { sid: s.id },
+        'aria-label': `${s.no}번 ${s.name} · ${TILE_STATE[mark]}`,
+        dataset: { sid: s.id, mark: String(mark) },
       },
       el('span.tile-no', `${s.no}`),
       el('span.tile-name', s.name),
-      el('span.tile-mark', { 'aria-hidden': 'true' }, done ? '✓' : ''));
+      el('span.tile-mark', { 'aria-hidden': 'true' }, TILE_MARK[mark]));
       onTap(tile, () => {
-        ctx.store.setDone(a.id, s.id, !done).catch((e) => ctx.fail(e));
+        ctx.store.setMark(a.id, s.id, nextMark(mark)).catch((e) => ctx.fail(e));
       }, { key: `check:${a.id}:${s.id}` });
       return tile;
     }));
   const sum = assignmentSummary(a, students);
-  const missingLine = sum.missing.length
-    ? el('p.missing', el('span.missing-label', '아직: '), sum.missing.map((s) => `${s.no}번 ${s.name}`).join(' · '))
-    : el('p.missing.all', '모두 했어요! 🎉');
-  return [grid, missingLine];
+  const names = (list) => list.map((s) => `${s.no}번 ${s.name}`).join(' · ');
+  const lines = [];
+  if (sum.half.length) lines.push(el('p.missing', el('span.half-label', '중간: '), names(sum.half)));
+  if (sum.missing.length) lines.push(el('p.missing', el('span.missing-label', '아직: '), names(sum.missing)));
+  if (!lines.length) lines.push(el('p.missing.all', '모두 통과했어요! 🎉'));
+  return [grid, ...lines];
 }
 
 function countBadge(a, students) {
   const sum = assignmentSummary(a, students);
   return el('div.count', { class: sum.doneCount === sum.total ? 'all' : '' },
-    el('strong', String(sum.doneCount)), ` / ${sum.total} 완료`);
+    el('strong', String(sum.doneCount)), ` / ${sum.total} 통과`,
+    sum.halfCount ? el('span.count-half', ` · 중간 ${sum.halfCount}`) : null);
 }
 
 function menuButton(ctx, a) {
@@ -161,10 +168,11 @@ function renderRecords(root, ctx, saved, students) {
       const card = el('button.record-card', { type: 'button' },
         el('span.record-date', dayLabel(a.closedAt)),
         el('span.record-title', a.title),
-        el('span.record-count', { class: sum.doneCount === sum.total ? 'all' : '' }, `${sum.doneCount} / ${sum.total}`),
-        el('span.record-missing', sum.missing.length
-          ? `아직: ${sum.missing.map((s) => s.name).join(', ')}`
-          : '모두 했어요'));
+        el('span.record-count', { class: sum.doneCount === sum.total ? 'all' : '' }, `${sum.doneCount} / ${sum.total}${sum.halfCount ? ` (중간 ${sum.halfCount})` : ''}`),
+        el('span.record-missing', [
+          sum.half.length ? `중간: ${sum.half.map((s) => s.name).join(', ')}` : '',
+          sum.missing.length ? `아직: ${sum.missing.map((s) => s.name).join(', ')}` : '',
+        ].filter(Boolean).join(' / ') || '모두 통과했어요'));
       onTap(card, () => {
         ctx.setPref('record', a.id);
         ctx.rerender();

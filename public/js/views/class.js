@@ -1,6 +1,6 @@
 // 04 우리 반: 학생 명단, 수학 연동 설정, 백업
 import { el, onTap, confirmBox, toast } from '../ui.js';
-import { sortByNo, parseRosterText, mergeRoster, AppError } from '../lib/model.js';
+import { sortByNo, parseRosterText, mergeRoster, AppError, markOf } from '../lib/model.js';
 import { parseOffDays } from '../lib/schoolday.js';
 
 // 고치는 중인 내용 (다른 기기에서 바뀌어도 덮어쓰지 않도록)
@@ -207,7 +207,7 @@ function backupSection(ctx) {
     const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const head = (a) => `${a.title}${a.closedAt ? ` (${new Date(a.closedAt).toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric' })})` : ''}`;
     const lines = [['번호', '이름', ...asgs.map(head)].map(esc).join(',')];
-    for (const s of students) lines.push([s.no, s.name, ...asgs.map((a) => (a.done[s.id] ? 'O' : ''))].map(esc).join(','));
+    for (const s of students) lines.push([s.no, s.name, ...asgs.map((a) => ['', '△', 'O'][markOf(a, s.id)])].map(esc).join(','));
     const blob = new Blob([`﻿${lines.join('\r\n')}`], { type: 'text/csv;charset=utf-8' });
     const a = el('a', { href: URL.createObjectURL(blob), download: `과제체크-${new Date().toISOString().slice(0, 10)}.csv` });
     document.body.append(a);

@@ -113,9 +113,30 @@ export function validateLimit(value) {
   return n;
 }
 
-/** 과제 체크 요약: 완료 수, 아직 안 한 학생 */
+/** 과제 체크 단계: 0 = 안 함, 1 = 중간(노랑), 2 = 통과(초록) */
+export const MARK = { NONE: 0, HALF: 1, DONE: 2 };
+
+export function markOf(assignment, studentId) {
+  if (assignment?.done?.[studentId]) return MARK.DONE;
+  if (assignment?.half?.[studentId]) return MARK.HALF;
+  return MARK.NONE;
+}
+
+/** 터치할 때마다 안 함 → 중간 → 통과 → 안 함 */
+export function nextMark(mark) {
+  return (mark + 1) % 3;
+}
+
+/** 과제 체크 요약: 통과 수, 중간인 학생, 아직 안 한 학생 */
 export function assignmentSummary(assignment, students) {
-  const done = assignment?.done || {};
-  const missing = students.filter((s) => !done[s.id]);
-  return { doneCount: students.length - missing.length, total: students.length, missing };
+  const half = [];
+  const missing = [];
+  let doneCount = 0;
+  for (const s of students) {
+    const m = markOf(assignment, s.id);
+    if (m === MARK.DONE) doneCount += 1;
+    else if (m === MARK.HALF) half.push(s);
+    else missing.push(s);
+  }
+  return { doneCount, halfCount: half.length, total: students.length, half, missing };
 }
