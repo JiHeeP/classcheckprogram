@@ -56,14 +56,21 @@ function schedule(ctx) {
   }, AUTO_REFRESH_MS);
 }
 
-/** 안 한 까닭: 접속만 / 낮은 레벨만 풂 */
+const shortDate = (key) => `${Number(key.slice(5, 7))}/${Number(key.slice(8, 10))}`;
+
+/** 전날 점수를 못 넘은 까닭 글: "L21 연습만 · 도전해야" / "L21 180점 · 11/12 185점 못 넘음" */
+function notBeatText(b) {
+  if (b.score == null) return `${b.level} 연습만 · 도전해야`;
+  return `${b.level} ${b.score}점 · ${b.prevDate ? shortDate(b.prevDate) : '전날'} ${b.prev}점 못 넘음`;
+}
+
+/** 안 한 까닭: 접속만 / 낮은 레벨만 풂 / 전날 점수 못 넘음 */
 function missReason(s) {
   if (s.accessOnly) return el('small.miss-reason', '접속만');
   if (s.lower) return el('small.miss-reason', `${s.lower.did} 함 · ${s.lower.need} 해야`);
+  if (s.notBeat) return el('small.miss-reason', notBeatText(s.notBeat));
   return null;
 }
-
-const shortDate = (key) => `${Number(key.slice(5, 7))}/${Number(key.slice(8, 10))}`;
 
 async function clearPenalty(ctx, r, s) {
   const ok = await confirmBox(`${s.no}번 ${s.name} 해제`,
@@ -147,6 +154,7 @@ function progressSection(r) {
     const parts = s.scores.map((x) => `${x.level} ${x.score}점`);
     if (s.practice.length) parts.push(`${s.practice.join('·')} 연습`);
     if (s.need) parts.push(`${s.need} 안 함`);
+    if (s.notBeat) parts.push(s.notBeat.score == null ? `${s.notBeat.level} 도전 안 함` : `${s.notBeat.prevDate ? shortDate(s.notBeat.prevDate) : '전날'} ${s.notBeat.prev}점 못 넘음`);
     return parts.length ? parts.join(' · ') : '기록 없음';
   };
   return el('section.progress',
@@ -158,7 +166,7 @@ function progressSection(r) {
         ? el('span.progress-up', s.levelUp.next ? `⬆ ${s.levelUp.passed} 통과 → ${s.levelUp.next}` : `🏁 ${s.levelUp.passed} 통과 (마지막)`)
         : null,
       el('span.progress-score', scoreText(s))))),
-    el('p.muted.small', '점수는 그날 도전에서 레벨마다 가장 높은 점수. 레벨 상승은 그날 처음 통과 점수를 넘어 다음 레벨 도전이 열린 것. "L○ 안 함"은 자기 최고 레벨을 안 풀어서 안 한 것으로 센 학생.'));
+    el('p.muted.small', '점수는 그날 도전에서 레벨마다 가장 높은 점수. 레벨 상승은 그날 처음 통과 점수를 넘어 다음 레벨 도전이 열린 것. "L○ 안 함"은 자기 최고 레벨을 안 풀어서, "못 넘음"·"도전 안 함"은 자기 최고 레벨 도전에서 전날 점수를 넘지 못해서 안 한 것으로 센 학생.'));
 }
 
 export function render(root, ctx, { changedTab } = {}) {
@@ -211,9 +219,11 @@ export function render(root, ctx, { changedTab } = {}) {
 
   const notes = [
     `${r.total}명 중 ${r.done}명 함${r.absent?.length ? ` (결석 ${r.absent.length}명 뺌)` : ''}`,
-    [r.levelRule ? '자기 최고 레벨을 풀어야 함' : '연습·도전을 풀어야 함',
+    [r.scoreRule ? '자기 최고 레벨 도전에서 전날 점수를 넘어야 함' : r.levelRule ? '자기 최고 레벨을 풀어야 함' : '연습·도전을 풀어야 함',
       r.accessOnly ? `접속만 ${r.accessOnly}명` : '',
-      r.lowerLevel ? `낮은 레벨만 ${r.lowerLevel}명` : ''].filter(Boolean).join(' · ') + (r.accessOnly || r.lowerLevel ? ' 포함' : ''),
+      r.lowerLevel ? `낮은 레벨만 ${r.lowerLevel}명` : '',
+      r.notBeatCount ? `전날 점수 못 넘음 ${r.notBeatCount}명` : ''].filter(Boolean).join(' · ')
+      + (r.accessOnly || r.lowerLevel || r.notBeatCount ? ' 포함' : ''),
     popup || !r.missing.length ? '' : '이름을 누르면 결석 처리',
     `${r.fetchedDate && r.fetchedDate !== todayKST() ? `${r.fetchedDate.slice(5).replace('-', '/')} ` : ''}${r.fetchedAt} 확인`,
   ];

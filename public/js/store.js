@@ -9,7 +9,7 @@
 //   rooms/{room}/cache/math         { sig, savedAt, report }   — 수학 결과 공유 캐시
 //   rooms/{room}/cache/mathDays     { classCode, daysJson }    — 지난 날짜별 '한 학생' (누적용)
 //   rooms/{room}/cache/mathBase     { classCode, baseJson }    — 오늘 받은 반·명단·통과 기록·이전 등교일 기록
-//   rooms/{room}/cache/mathPass     { classCode, passJson }    — 학생별 레벨 처음 통과한 날 (새 날짜만 더 읽음)
+//   rooms/{room}/cache/mathPass     { classCode, passJson }    — 학생별 레벨 처음 통과한 날·날짜별 도전 점수 (새 날짜만 더 읽음)
 //
 // fs 는 Firebase 'firestore' 모듈(브라우저: gstatic, 테스트: npm firebase)을 그대로 넘겨받는다.
 
