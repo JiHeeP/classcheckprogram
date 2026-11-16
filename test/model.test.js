@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  normalizeRoster, parseRosterText, mergeRoster, chooseNumber, validateDraw, validateMathCode, assignmentSummary,
+  normalizeRoster, parseRosterText, mergeRoster, chooseNumber, validateDraw, validateMathCode, assignmentSummary, markOf, nextMark, MARK,
 } from '../public/js/lib/model.js';
 
 test('명단 정리: 번호순, id 생성, 중복·빈 이름 오류', () => {
@@ -44,4 +44,24 @@ test('과제 요약', () => {
   const s = assignmentSummary({ done: { a: 't' } }, students);
   assert.equal(s.doneCount, 1);
   assert.deepEqual(s.missing.map((x) => x.id), ['b']);
+});
+
+test('과제 요약: 중간(노랑)은 통과에도 아직에도 안 들어감', () => {
+  const students = [{ id: 'a', no: '1' }, { id: 'b', no: '2' }, { id: 'c', no: '3' }];
+  const s = assignmentSummary({ done: { a: 't' }, half: { b: 't' } }, students);
+  assert.equal(s.doneCount, 1);
+  assert.equal(s.halfCount, 1);
+  assert.deepEqual(s.half.map((x) => x.id), ['b']);
+  assert.deepEqual(s.missing.map((x) => x.id), ['c']);
+  // half 가 없는 예전 기록도 그대로 읽힘
+  assert.equal(assignmentSummary({ done: {} }, students).halfCount, 0);
+});
+
+test('터치 순서: 안 함 → 중간 → 통과 → 안 함', () => {
+  assert.equal(nextMark(MARK.NONE), MARK.HALF);
+  assert.equal(nextMark(MARK.HALF), MARK.DONE);
+  assert.equal(nextMark(MARK.DONE), MARK.NONE);
+  assert.equal(markOf({ done: { a: 't' }, half: { a: 't' } }, 'a'), MARK.DONE); // 둘 다 있으면 통과 우선
+  assert.equal(markOf({ half: { a: 't' } }, 'a'), MARK.HALF);
+  assert.equal(markOf({}, 'a'), MARK.NONE);
 });

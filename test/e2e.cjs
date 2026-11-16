@@ -88,17 +88,26 @@ async function main() {
   await p2.goto(`${URL0}#check`);
   await p2.locator('.page-title', { hasText: '수학 익힘책 34쪽' }).waitFor();
 
+  // 한 번 터치 → 중간(노랑), 잠깐 뒤 한 번 더 → 통과(초록)
   for (const i of [0, 1, 2, 4, 5]) await tiles.nth(i).click();
   await page.waitForTimeout(500);
-  assert(await page.locator('.tile.done').count() === 5, '5칸 터치 → 완료 5');
-  await tiles.nth(4).click(); // 다시 누르면 해제
+  assert(await page.locator('.tile.half').count() === 5, '5칸 한 번 터치 → 중간(노랑) 5');
+  for (const i of [0, 1, 2, 4, 5]) await tiles.nth(i).click();
+  await page.waitForTimeout(500);
+  assert(await page.locator('.tile.done').count() === 5, '한 번 더 터치 → 통과(초록) 5');
+  await tiles.nth(4).click(); // 세 번째 터치면 해제
   await page.locator('.count strong', { hasText: '4' }).waitFor();
-  assert(true, '다시 터치 → 해제 (4 / 18)');
+  assert(await tiles.nth(4).evaluate((n) => !n.classList.contains('half') && !n.classList.contains('done')), '세 번째 터치 → 해제 (4 / 18)');
 
-  // 같은 칸을 아주 빠르게 두 번(전자칠판 이중 입력) → 한 번만 반영
+  // 같은 칸을 아주 빠르게 두 번(전자칠판 이중 입력) → 한 번만 반영(중간)
   await tiles.nth(8).dblclick();
   await page.waitForTimeout(600);
-  assert(await tiles.nth(8).evaluate((n) => n.classList.contains('done')), '이중 터치는 한 번으로 처리');
+  assert(await tiles.nth(8).evaluate((n) => n.classList.contains('half')), '이중 터치는 한 번으로 처리 (중간)');
+  await page.locator('.missing', { hasText: '중간' }).waitFor();
+  assert(true, '아래 줄에 중간 학생 표시');
+  await tiles.nth(8).click();
+  await page.waitForTimeout(500);
+  assert(await tiles.nth(8).evaluate((n) => n.classList.contains('done')), '한 번 더 → 통과');
 
   await p2.locator('.count strong', { hasText: '5' }).waitFor({ timeout: 6000 });
   assert(true, '폰 화면에 실시간 반영 (5 / 18)');
@@ -211,6 +220,8 @@ async function main() {
   assert(true, '인터넷이 끊기면 빨간 띠');
   await page.getByRole('link', { name: '과제 체크' }).click();
   await page.locator('.tile-grid .tile').nth(10).click();
+  await page.waitForTimeout(500);
+  await page.locator('.tile-grid .tile').nth(10).click();
   await page.waitForTimeout(300);
   assert(await page.locator('.tile.done').count() === 6, '오프라인에서도 체크가 바로 보임');
   await board.setOffline(false);
@@ -233,6 +244,8 @@ async function main() {
   await shot(page, '01-records');
   await page.locator('.record-card', { hasText: '수학 익힘책 34쪽' }).click();
   assert(await page.locator('.tile.done').count() === 6, '지난 기록에 체크 6개 그대로');
+  await page.locator('.tile-grid .tile').nth(16).click();
+  await page.waitForTimeout(500);
   await page.locator('.tile-grid .tile').nth(16).click();
   await page.locator('.count strong', { hasText: '7' }).waitFor();
   assert(true, '저장한 기록에서도 늦게 낸 학생 체크');

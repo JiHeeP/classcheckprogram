@@ -3,7 +3,8 @@
 //   rooms/{room}                    { className, mathCode, offDaysText, mathExcludeText, roster: [{id,no,name}],
 //                                     mathCountStart, mathLimit, mathCleared: { 번호: 'YYYY-MM-DD'(그 날까지 해제) },
 //                                     mathAbsent: { 'YYYY-MM-DD_번호': true(그날 결석) } }
-//   rooms/{room}/assignments/{id}   { title, createdAt, closedAt?, done: { 학생id: 완료시각 } }
+//   rooms/{room}/assignments/{id}   { title, createdAt, closedAt?, done: { 학생id: 통과시각 }, half?: { 학생id: 중간시각 } }
+//                                   한 학생은 done·half 중 한 곳에만 있다 (done = 초록 통과, half = 노랑 중간)
 //                                   closedAt 이 있으면 '저장한 기록'(지난 과제)
 //   rooms/{room}/draws/{id}         { title, min, max, createdAt, picks: { 번호: {sid,no,name,at} }, byStudent: { 학생id: 번호 } }
 //   rooms/{room}/cache/math         { sig, savedAt, report }   — 수학 결과 공유 캐시
@@ -15,7 +16,7 @@
 
 import {
   AppError, cleanText, newId, normalizeRoster, chooseNumber, validateDraw, validateMathCode,
-  validateCountStart, validateLimit,
+  validateCountStart, validateLimit, MARK,
 } from './lib/model.js';
 import {
   buildReport, MathError, MathPracticeClient, absentKey, DONE_RULE, DEFAULT_EXCLUDE_TEXT, DEFAULT_COUNT_START, DEFAULT_LIMIT, parseNames,
@@ -63,9 +64,11 @@ export function createStore(fs, db, room = 'main') {
   function readAssignment(snap) {
     const d = snap.data({ serverTimestamps: 'estimate' });
     const done = {};
+    const half = {};
     for (const [sid, at] of Object.entries(d.done || {})) done[sid] = tsToISO(at);
+    for (const [sid, at] of Object.entries(d.half || {})) if (!done[sid]) half[sid] = tsToISO(at);
     return {
-      id: snap.id, title: d.title || '', createdAt: tsToISO(d.createdAt) || '', closedAt: tsToISO(d.closedAt), done,
+      id: snap.id, title: d.title || '', createdAt: tsToISO(d.createdAt) || '', closedAt: tsToISO(d.closedAt), done, half,
     };
   }
 
@@ -171,11 +174,19 @@ export function createStore(fs, db, room = 'main') {
 
   /** 원하는 상태(done)를 그대로 저장. 같은 요청이 두 번 와도 결과가 같고, 다른 학생 칸과 겹치지 않는다. */
   function setDone(id, studentId, done) {
-    return fs.updateDoc(asgRef(id), new fs.FieldPath('done', studentId), done ? fs.serverTimestamp() : fs.deleteField());
+    return setMark(id, studentId, done ? MARK.DONE : MARK.NONE);
+  }
+
+  /** 단계(0 안 함 / 1 중간 / 2 통과)를 그대로 저장. done·half 두 칸을 한 번에 바꿔서 한 곳에만 남게 한다. */
+  function setMark(id, studentId, mark) {
+    const now = fs.serverTimestamp();
+    return fs.updateDoc(asgRef(id),
+      new fs.FieldPath('done', studentId), mark === MARK.DONE ? now : fs.deleteField(),
+      new fs.FieldPath('half', studentId), mark === MARK.HALF ? now : fs.deleteField());
   }
 
   function resetAssignment(id) {
-    return fs.updateDoc(asgRef(id), { done: {} });
+    return fs.updateDoc(asgRef(id), { done: {}, half: {} });
   }
 
   /** 과제를 '저장'(마감)해서 지난 기록으로 보낸다. 체크는 그대로 남고 나중에 고칠 수도 있다. */
@@ -427,7 +438,7 @@ export function createStore(fs, db, room = 'main') {
     });
     for (const a of data.assignments || []) {
       if (!a?.id || !a.title) continue;
-      const asg = { title: cleanText(a.title), createdAt: a.createdAt || new Date().toISOString(), done: a.done || {} };
+      const asg = { title: cleanText(a.title), createdAt: a.createdAt || new Date().toISOString(), done: a.done || {}, half: a.half || {} };
       if (a.closedAt) asg.closedAt = a.closedAt;
       batch.set(asgRef(a.id), asg);
     }
@@ -454,6 +465,7 @@ export function createStore(fs, db, room = 'main') {
     renameAssignment,
     deleteAssignment,
     setDone,
+    setMark,
     resetAssignment,
     closeAssignment,
     reopenAssignment,
