@@ -58,13 +58,21 @@ function schedule(ctx) {
 
 const shortDate = (key) => `${Number(key.slice(5, 7))}/${Number(key.slice(8, 10))}`;
 
-/** 전날 점수를 못 넘은 까닭 글: "L21 연습만 · 도전해야" / "L21 180점 · 11/12 185점 못 넘음" */
+/**
+ * 어제보다 상승하지 못한 까닭 글
+ *   맞힌 개수(11/18~): "B1 15개 · 11/18 15개 못 넘음" / "L10 처음 · 12문제 (20문제 채워야)"
+ *   점수(11/16~17): "L21 연습만 · 도전해야" / "L21 180점 · 11/12 185점 못 넘음"
+ */
 function notBeatText(b) {
+  if ('hits' in b) {
+    if (b.prev == null) return `${b.level} 처음 · ${b.solved}문제 (${b.size}문제 채워야)`;
+    return `${b.level} ${b.hits}개 · ${b.prevDate ? shortDate(b.prevDate) : '전날'} ${b.prev}개 못 넘음`;
+  }
   if (b.score == null) return `${b.level} 연습만 · 도전해야`;
   return `${b.level} ${b.score}점 · ${b.prevDate ? shortDate(b.prevDate) : '전날'} ${b.prev}점 못 넘음`;
 }
 
-/** 안 한 까닭: 접속만 / 낮은 레벨만 풂 / 전날 점수 못 넘음 */
+/** 안 한 까닭: 접속만 / 다른(낮은) 레벨만 풂 / 전날보다 못 늘림(점수·맞힌 개수) */
 function missReason(s) {
   if (s.accessOnly) return el('small.miss-reason', '접속만');
   if (s.lower) return el('small.miss-reason', `${s.lower.did} 함 · ${s.lower.need} 해야`);
@@ -152,9 +160,12 @@ function progressSection(r) {
   if (!r.progress?.length) return null;
   const scoreText = (s) => {
     const parts = s.scores.map((x) => `${x.level} ${x.score}점`);
-    if (s.practice.length) parts.push(`${s.practice.join('·')} 연습`);
+    if (s.practice.length) parts.push(`${s.practice.join('·')} 풂(점수 없음)`);
     if (s.need) parts.push(`${s.need} 안 함`);
-    if (s.notBeat) parts.push(s.notBeat.score == null ? `${s.notBeat.level} 도전 안 함` : `${s.notBeat.prevDate ? shortDate(s.notBeat.prevDate) : '전날'} ${s.notBeat.prev}점 못 넘음`);
+    if (s.notBeat) {
+      parts.push('hits' in s.notBeat ? notBeatText(s.notBeat)
+        : s.notBeat.score == null ? `${s.notBeat.level} 도전 안 함` : `${s.notBeat.prevDate ? shortDate(s.notBeat.prevDate) : '전날'} ${s.notBeat.prev}점 못 넘음`);
+    }
     return parts.length ? parts.join(' · ') : '기록 없음';
   };
   return el('section.progress',
@@ -166,7 +177,7 @@ function progressSection(r) {
         ? el('span.progress-up', s.levelUp.next ? `⬆ ${s.levelUp.passed} 통과 → ${s.levelUp.next}` : `🏁 ${s.levelUp.passed} 통과 (마지막)`)
         : null,
       el('span.progress-score', scoreText(s))))),
-    el('p.muted.small', '점수는 그날 도전에서 레벨마다 가장 높은 점수. 레벨 상승은 그날 처음 통과 점수를 넘어 다음 레벨 도전이 열린 것. "L○ 안 함"은 자기 최고 레벨을 안 풀어서, "못 넘음"·"도전 안 함"은 자기 최고 레벨 도전에서 전날 점수를 넘지 못해서 안 한 것으로 센 학생.'));
+    el('p.muted.small', '점수는 끝까지 푼 판에서 레벨마다 가장 높은 점수(통과한 판은 점수 없이 끝남). 레벨 상승은 그날 처음 통과한 것(최근 20문제 중 18개, 기초는 한 판에서 18개 · 10문제 레벨은 9개). "L○ 안 함"은 오늘 할 것 레벨을 안 풀어서, "못 넘음"은 그 레벨에서 연속 20문제(10문제 레벨은 10문제) 중 맞힌 개수가 전날보다 늘지 않아서 안 한 것으로 센 학생.'));
 }
 
 export function render(root, ctx, { changedTab } = {}) {
@@ -219,10 +230,11 @@ export function render(root, ctx, { changedTab } = {}) {
 
   const notes = [
     `${r.total}명 중 ${r.done}명 함${r.absent?.length ? ` (결석 ${r.absent.length}명 뺌)` : ''}`,
-    [r.scoreRule ? '자기 최고 레벨 도전에서 전날 점수를 넘어야 함' : r.levelRule ? '자기 최고 레벨을 풀어야 함' : '연습·도전을 풀어야 함',
+    [r.hitRule ? '오늘 할 것 레벨을 통과하거나 맞힌 개수가 전날보다 늘어야 함'
+      : r.scoreRule ? '자기 최고 레벨 도전에서 전날 점수를 넘어야 함' : r.levelRule ? '자기 최고 레벨을 풀어야 함' : '연습·도전을 풀어야 함',
       r.accessOnly ? `접속만 ${r.accessOnly}명` : '',
-      r.lowerLevel ? `낮은 레벨만 ${r.lowerLevel}명` : '',
-      r.notBeatCount ? `전날 점수 못 넘음 ${r.notBeatCount}명` : ''].filter(Boolean).join(' · ')
+      r.lowerLevel ? `${r.hitRule ? '다른 레벨만' : '낮은 레벨만'} ${r.lowerLevel}명` : '',
+      r.notBeatCount ? `${r.hitRule ? '전날보다 못 늘림' : '전날 점수 못 넘음'} ${r.notBeatCount}명` : ''].filter(Boolean).join(' · ')
       + (r.accessOnly || r.lowerLevel || r.notBeatCount ? ' 포함' : ''),
     popup || !r.missing.length ? '' : '이름을 누르면 결석 처리',
     `${r.fetchedDate && r.fetchedDate !== todayKST() ? `${r.fetchedDate.slice(5).replace('-', '/')} ` : ''}${r.fetchedAt} 확인`,
