@@ -169,6 +169,10 @@ export const HIT_FROM = '2026-11-18';
 export const DONE_RULE = `record-from-${STRICT_FROM}-level-from-${LEVEL_FROM}-score-from-${SCORE_FROM}-hit-from-${HIT_FROM}`;
 // 통과 계산 방식이 바뀌면 이 값도 바뀐다. 저장해 둔 통과 기록(passCache)을 버리고 반 전체를 다시 읽는다.
 export const PASS_VERSION = 2;
+// 판단 보류한 날: 분수 연산 마스터가 바뀐 날(11/17)이라 그날 한 것은 따지지 않는다 (선생님 결정).
+//   그날 기준 화면(11/18 아침)은 안 한 학생 명단을 비우고 '판단 보류'로 보여 주고, 누적에도 세지 않는다.
+//   11/19 아침 화면(11/18 한 것)부터 '오늘 할 것' 레벨 기준으로 판정한다.
+export const HOLD_DAYS = ['2026-11-17'];
 
 /**
  * 반 문서의 기초 시작점 basicStart = {'번호': {sub, mul, div, g}} (값 'B1'~'B8' 또는 '-' = 그 줄은 통과).
@@ -719,7 +723,8 @@ export async function buildReport({
   // 이전 등교일에 결석으로 적어 둔 학생은 그날 명단에서 뺀다 (했어도 결석으로 적었으면 뺌)
   const absentPrev = counted.filter((s) => isAbsent(s.no, prev));
   const present = counted.filter((s) => !isAbsent(s.no, prev));
-  const missing = present.filter((s) => !done.has(s.no)).map((s) => ({
+  const hold = HOLD_DAYS.includes(prev);
+  const missing = present.filter((s) => !hold && !done.has(s.no)).map((s) => ({
     ...s,
     accessOnly: !withRecord.has(s.no) && accessed.has(s.no), // 접속만 하고 안 풂
     lower: lower.get(s.no) || null,                           // 자기 최고 레벨보다 낮은 레벨만 풂 {did, need}
@@ -750,7 +755,7 @@ export async function buildReport({
       || Number(a.no) - Number(b.no));
 
   // ---- 누적 ----
-  const days = countStart <= prev ? cal.daysBetween(countStart, prev) : [];
+  const days = (countStart <= prev ? cal.daysBetween(countStart, prev) : []).filter((d) => !HOLD_DAYS.includes(d));
   const doneByDay = new Map([[prev, done]]);
   const known = dayCache ? await dayCache.load(client.code) : {};
   if (known.rule !== DONE_RULE) { // 예전 기준으로 저장한 새 기준 날짜는 버리고 다시 센다
@@ -817,5 +822,6 @@ export async function buildReport({
     fetchedAt: timeKST(now),
     fetchedDate: today,
     todayOff: cal.whyOff(today),
+    hold,         // 판단 보류한 날이면 true (안 한 학생 명단을 비움, 누적에도 안 셈)
   };
 }

@@ -224,7 +224,9 @@ export function render(root, ctx, { changedTab } = {}) {
       el('small', `${s.no}번`), s.name, missReason(s));
     return popup ? node : onTap(node, () => markAbsent(ctx, r, s), { key: `missing:${r.dateKey}:${s.no}` });
   };
-  const names = r.missing.length
+  const names = r.hold
+    ? el('p.all-done', '판단 보류 — 분수 연산 마스터가 바뀐 날이라 이날은 따지지 않아요. 다음 등교일 한 것부터 오늘 할 것 레벨로 봐요.')
+    : r.missing.length
     ? el('div.name-chips', r.missing.map(chip))
     : el('p.all-done', '모두 했어요! 🎉');
 

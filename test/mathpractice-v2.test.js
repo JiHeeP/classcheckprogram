@@ -213,3 +213,15 @@ test('저장본에 오늘 기록은 넣지 않고, 다음 날 새 날짜만 더�
   assert.equal(saved.windows['2'].L2, ones(18));
   assert.ok(!r.missing.some((s) => s.no === '2'));
 });
+
+test('판단 보류: 11/17 한 것은 따지지 않음 (11/18 아침 화면은 명단 비움, 누적에서도 뺌)', async () => {
+  const db = hitDb();
+  const am18 = await buildReport({ classCode: 'TEST01', now: new Date('2026-11-17T23:30:00Z'), countStart: '2026-11-16', fetchImpl: fakeFirestoreFetch(db) });
+  assert.equal(am18.dateKey, '2026-11-17');
+  assert.equal(am18.hold, true);
+  assert.deepEqual(am18.missing, []);
+  assert.equal(am18.countedDays, 1, '11/16 만 셈');
+  const am20 = await buildReport({ classCode: 'TEST01', now: new Date('2026-11-19T23:30:00Z'), countStart: '2026-11-16', fetchImpl: fakeFirestoreFetch(db) });
+  assert.equal(am20.hold, false);
+  assert.equal(am20.countedDays, 3, '11/16 · 11/18 · 11/19 (11/17 뺌)');
+});
