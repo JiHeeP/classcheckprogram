@@ -38,7 +38,11 @@ export function fakeFirestoreFetch(db, opts = {}) {
     const cls = db[code];
     if (!cls) return reply({ error: { code: 404 } }, 404);
 
-    if (!m[2]) return reply(doc(`classes/${code}`, { name: cls.name, offDays: cls.offDays || [], archived: false }));
+    if (!m[2]) {
+      return reply(doc(`classes/${code}`, {
+        name: cls.name, offDays: cls.offDays || [], archived: false, ...(cls.basicStart ? { basicStart: cls.basicStart } : {}),
+      }));
+    }
 
     if (m[2] === '/students') {
       const size = opts.pageSize || Number(url.searchParams.get('pageSize')) || 300;
@@ -55,7 +59,7 @@ export function fakeFirestoreFetch(db, opts = {}) {
     const collection = sq.from[0].collectionId; // results | logs
     const q = sq.where;
     const filters = (q.compositeFilter ? q.compositeFilter.filters : [q]).map((f) => f.fieldFilter);
-    const val = (v) => ('stringValue' in v ? v.stringValue : 'referenceValue' in v ? v.referenceValue : Number(v.integerValue));
+    const val = (v) => ('arrayValue' in v ? null : 'stringValue' in v ? v.stringValue : 'referenceValue' in v ? v.referenceValue : Number(v.integerValue));
     const test = (row, f) => {
       const a = row[f.field.fieldPath];
       const b = val(f.value);
@@ -63,6 +67,7 @@ export function fakeFirestoreFetch(db, opts = {}) {
       if (f.op === 'GREATER_THAN') return a > b;
       if (f.op === 'GREATER_THAN_OR_EQUAL') return a >= b;
       if (f.op === 'LESS_THAN') return a < b;
+      if (f.op === 'IN') return f.value.arrayValue.values.some((v) => String(a) === String(val(v)));
       throw new Error(`가짜 Firestore 가 모르는 조건: ${f.op}`);
     };
     // 문서 이름은 원래 순서로 정해서 여러 번 읽어도 같은 이름
@@ -91,6 +96,8 @@ export function fakeFirestoreFetch(db, opts = {}) {
           : doc(r.__name__, {
             dateKey: r.dateKey, studentNo: String(r.studentNo), mode: r.mode, level: r.level, score: r.score,
             ...(r.totalQuestions != null ? { totalQuestions: r.totalQuestions } : {}),
+            ...(r.seq != null ? { seq: r.seq } : {}),
+            ...(r.ts != null ? { ts: r.ts } : {}),
           }),
       }));
     return reply(rows.length ? rows : [{ readTime: new Date().toISOString() }]);
