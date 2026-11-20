@@ -225,3 +225,9 @@ test('판단 보류: 11/17 한 것은 따지지 않음 (11/18 아침 화면은 �
   assert.equal(am20.hold, false);
   assert.equal(am20.countedDays, 3, '11/16 · 11/18 · 11/19 (11/17 뺌)');
 });
+
+test('화면 레벨 이름 a~e (mathpractice와 같은 규칙)', async () => {
+  const { levelName } = await import('../public/js/lib/mathpractice.js');
+  const pairs = { B1: 'a1', B10: 'a10', L1: 'b1', L9: 'b9', 'L9-2': 'b10', L10: 'b11', L22: 'b23', L23: 'c1', L36: 'c14', D1: 'd1', D6: 'd6', A1: 'e1', A6: 'e6', X9: 'X9', '': '' };
+  for (const [k, v] of Object.entries(pairs)) assert.equal(levelName(k), v, k);
+});

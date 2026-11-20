@@ -138,6 +138,21 @@ function challengeScore(r) {
   return Number(r.score);
 }
 
+/**
+ * 화면 레벨 이름 — mathpractice와 같은 규칙(선생님 결정 2026-11-20).
+ *   a 기초 연산(B1~B10 → a1~a10) · b 분수·소수 기초(L1~L22, L9-2 = b10 → b1~b23)
+ *   c 분수의 곱셈(L23~L36 → c1~c14) · d 소수의 곱셈(D1~D6 → d1~d6) · e 도형의 넓이(A1~A6 → e1~e6)
+ * 기록·판정은 속 이름(B1·L1·D1·A1)을 그대로 쓰고, 화면에 보일 때만 바꾼다. 모르는 이름은 그대로.
+ */
+const C_FROM = LEVEL_ORDER.indexOf('L23');
+export function levelName(level) {
+  if (!level) return level || '';
+  const i = LEVEL_ORDER.indexOf(level);
+  if (i >= 0) return i < C_FROM ? `b${i + 1}` : `c${i - C_FROM + 1}`;
+  const m = /^([BDA])(\d+)$/.exec(level);
+  return m ? { B: 'a', D: 'd', A: 'e' }[m[1]] + m[2] : level;
+}
+
 // 마지막 레벨(지금은 L36). 이 레벨을 통과한 학생은 모든 레벨을 끝낸 것이라 수학 확인에서 자동으로 뺀다.
 // 레벨이 더 늘면 마지막 레벨도 따라서 바뀐다.
 export const FINAL_LEVEL = LEVEL_ORDER[LEVEL_ORDER.length - 1];
