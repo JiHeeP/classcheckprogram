@@ -31,13 +31,27 @@ export function passScore(level) {
 //   값은 도전 문제 수(chalQ). 통과는 '한 판 안'에서만 판정한다 (아래 passWindow)
 export const BASIC_LINES = { sub: ['B1'], mul: ['B2', 'B3', 'B4'], div: ['B5', 'B6', 'B7', 'B8'], fm: ['B9', 'B10'] };
 export const BASIC_ORDER = [...BASIC_LINES.sub, ...BASIC_LINES.mul, ...BASIC_LINES.div, ...BASIC_LINES.fm];
-const BASIC_CHAL_Q = { B1: 20, B2: 20, B3: 20, B4: 10, B5: 20, B6: 20, B7: 20, B8: 10, B9: 10, B10: 10 };
-const CHAL_Q = { ...LEVEL_CHAL_Q, ...BASIC_CHAL_Q };
+//   B3·B7 은 2026-11-19 에 20문제 → 10문제로 줄었다 (mathpractice levels.js). 그 전의 20문제 판은 그때 규칙(20문제 중 18개)으로 본다
+const BASIC_CHAL_Q = { B1: 20, B2: 20, B3: 10, B4: 10, B5: 20, B6: 20, B7: 10, B8: 10, B9: 10, B10: 10 };
+// 소수의 곱셈 D1~D6 · 도형의 넓이 A1~A6 (mathpractice 2026-11-18~20 추가). 분수·소수처럼 앞 레벨을 통과해야 열리고,
+//   통과도 분수·소수와 같은 '이어 붙이는 창'. WAS_Q: 20문제였다가 10문제로 줄인 레벨(2026-11-19) — 예전 20문제 판은 20문제 중 18개
+export const DMUL_ORDER = ['D1', 'D2', 'D3', 'D4', 'D5', 'D6'];
+export const AREA_ORDER = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6'];
+const TRACK_CHAL_Q = {
+  D1: 20, D2: 20, D3: 10, D4: 10, D5: 20, D6: 20,
+  A1: 20, A2: 10, A3: 10, A4: 10, A5: 10, A6: 10,
+};
+const WAS_Q = new Set(['D3', 'A2', 'A3', 'A4', 'A5', 'A6']);
+// 잠기는 트랙 — 학생 화면에 보이는 순서 (기초 다음). mathpractice levels.js TRACKS 와 같음
+const LOCKED_TRACKS = [LEVEL_ORDER, DMUL_ORDER, AREA_ORDER];
+const ALL_ORDER = [...BASIC_ORDER, ...LEVEL_ORDER, ...DMUL_ORDER, ...AREA_ORDER];
+const CHAL_Q = { ...LEVEL_CHAL_Q, ...BASIC_CHAL_Q, ...TRACK_CHAL_Q };
 const isBasic = (level) => Object.prototype.hasOwnProperty.call(BASIC_CHAL_Q, level);
 
 /** 같은 트랙(기초는 같은 줄) 안에서 다음 레벨 이름 (마지막이면 '') — mathpractice levels.js nextInTrack 과 같음 */
 export function nextLevel(level) {
-  const list = isBasic(level) ? Object.values(BASIC_LINES).find((l) => l.includes(level)) : LEVEL_ORDER;
+  const list = isBasic(level) ? Object.values(BASIC_LINES).find((l) => l.includes(level))
+    : LOCKED_TRACKS.find((t) => t.includes(level)) || [];
   const i = list.indexOf(level);
   return i >= 0 && i < list.length - 1 ? list[i + 1] : '';
 }
@@ -54,6 +68,13 @@ export function nextLevel(level) {
 // ---------------------------------------------------------------------------
 
 const allowedWrong = (level) => (CHAL_Q[level] <= 10 ? 1 : 2);
+
+/**
+ * 판이 지금 문제 수보다 길면 예전에 더 긴 판(20문제)으로 푼 기록이다 (B3·B7: 2026-11-19 20 → 10).
+ * 그런 판은 그때 규칙(20문제 중 18개)으로 본다 — mathpractice runPassed 와 같음
+ */
+const OLD_WINDOW = { size: 20, need: 18 };
+const isOldRun = (level, seq) => (isBasic(level) || WAS_Q.has(level)) && seq.length > CHAL_Q[level];
 
 /** 통과 판정 창 {size, need, run}. run: 한 판 안에서만 판정(기초) */
 export function passWindow(level) {
@@ -92,6 +113,7 @@ const byTime = (a, b) => (a.dateKey < b.dateKey ? -1 : a.dateKey > b.dateKey ? 1
  */
 export function addProgress(passes, windows, rows, hits = {}) {
   const daySeq = new Map(); // '번호|레벨|날짜' → 그날 이어 붙인 seq
+  const dayOld = new Set(); // 그날 예전 긴 판(20문제)이 있는 '번호|레벨|날짜' → 맞힌 개수를 20문제 창으로 잼
   for (const r of [...rows].sort(byTime)) {
     if (!CHAL_Q[r.level] || !r.dateKey || (r.mode !== 'challenge' && r.mode !== 'aborted')) continue;
     const mine = passes[r.no] || (passes[r.no] = {});
@@ -99,15 +121,19 @@ export function addProgress(passes, windows, rows, hits = {}) {
     if (typeof r.seq === 'string' && SEQ_RE.test(r.seq)) {
       const key = `${r.no}|${r.level}|${r.dateKey}`;
       daySeq.set(key, (daySeq.get(key) || '') + r.seq);
+      if (isOldRun(r.level, r.seq)) dayOld.add(key);
       const w = passWindow(r.level);
       if (w.run) {
-        if (countOnes(r.seq) >= w.need) pass();
+        if (countOnes(r.seq) >= (isOldRun(r.level, r.seq) ? OLD_WINDOW.need : w.need)) pass();
       } else {
+        // 창은 최근 20문제까지 들고 있고, 지금 창 크기(10문제 레벨은 10)만큼 본다. 예전 20문제 판은 20문제 중 18개
+        const ww = isOldRun(r.level, r.seq) ? OLD_WINDOW : w;
         const myWin = windows[r.no] || (windows[r.no] = {});
         let h = myWin[r.level] || '';
         for (const c of r.seq) {
-          h = (h + c).slice(-w.size);
-          if (h.length >= w.need && countOnes(h) >= w.need) pass();
+          h = (h + c).slice(-Math.max(OLD_WINDOW.size, w.size));
+          const last = h.slice(-ww.size);
+          if (last.length >= ww.need && countOnes(last) >= ww.need) pass();
         }
         myWin[r.level] = h;
       }
@@ -119,12 +145,20 @@ export function addProgress(passes, windows, rows, hits = {}) {
   for (const [key, seq] of daySeq) {
     const [no, level, date] = key.split('|');
     const byDate = ((hits[no] || (hits[no] = {}))[level] || (hits[no][level] = {}));
+    const size = dayOld.has(key) ? OLD_WINDOW.size : passWindow(level).size;
     const prev = byDate[date] || { c: 0, n: 0 };
     // 같은 날 기록이 나눠 들어와도(드묾) 창은 그날 몫끼리만 — 뒤에 온 몫은 따로 재서 큰 값을 남긴다
-    byDate[date] = { c: Math.max(prev.c, bestWindow(seq, passWindow(level).size)), n: prev.n + seq.length };
+    // s: 맞힌 개수를 잰 창 크기. 창 크기가 다른 날(문제 수가 바뀌기 전)끼리는 비교하지 않는다
+    byDate[date] = { c: Math.max(prev.c, bestWindow(seq, size)), n: prev.n + seq.length, s: size };
   }
   return { passes, windows, hits };
 }
+
+/** 화면에 늘어놓는 순서 (기초 → 분수·소수 → 소수의 곱셈 → 도형의 넓이) */
+const sortIndex = (level) => {
+  const i = ALL_ORDER.indexOf(level);
+  return i < 0 ? ALL_ORDER.length : i;
+};
 
 const levelIndex = (level) => {
   const i = LEVEL_ORDER.indexOf(level);
@@ -165,10 +199,19 @@ export const STRICT_FROM = '2026-11-02';
 export const LEVEL_FROM = '2026-11-03';
 export const SCORE_FROM = '2026-11-16';
 export const HIT_FROM = '2026-11-18';
+// TRACKS_FROM ~ : 소수의 곱셈·도형의 넓이 트랙까지 센다 (선생님 결정 2026-11-23). 분수·소수(L36)와 기초를 끝낸 학생도
+//                 '오늘 할 것'(학생 화면과 같음)이 소수의 곱셈 → 도형의 넓이로 이어지고, 세 트랙을 모두 끝내야 '모든 레벨 통과'.
+//                 그 전 날은 예전처럼 L36 + 기초를 끝내면 다 끝낸 것 (이미 쌓인 누적은 바뀌지 않게)
+export const TRACKS_FROM = '2026-11-23';
+// 기준(DONE_RULE)이 PREV_DONE_RULE 에서 바뀐 것이면 RECHECK_FROM 부터의 날만 다시 센다 (그 전 날은 결과가 같아서)
+const PREV_DONE_RULE = 'record-from-2026-11-02-level-from-2026-11-03-score-from-2026-11-16-hit-from-2026-11-18';
+const RECHECK_FROM = '2026-11-19';
+const PREV_DONE_RULE_2 = `${PREV_DONE_RULE}-q10-${RECHECK_FROM}`; // B3·B7 10문제 반영 뒤 (트랙 추가 전)
 // 기준이 바뀌면 이 값도 바뀐다. 결과 캐시와, 새 기준 날짜의 지난 저장본(dayCache)을 버리고 다시 센다.
-export const DONE_RULE = `record-from-${STRICT_FROM}-level-from-${LEVEL_FROM}-score-from-${SCORE_FROM}-hit-from-${HIT_FROM}`;
+export const DONE_RULE = `record-from-${STRICT_FROM}-level-from-${LEVEL_FROM}-score-from-${SCORE_FROM}-hit-from-${HIT_FROM}-q10-${RECHECK_FROM}-tracks-${TRACKS_FROM}`;
 // 통과 계산 방식이 바뀌면 이 값도 바뀐다. 저장해 둔 통과 기록(passCache)을 버리고 반 전체를 다시 읽는다.
-export const PASS_VERSION = 2;
+//   3: B3·B7 한 판 10문제(2026-11-19) 반영, 맞힌 개수에 창 크기(s)를 함께 저장
+export const PASS_VERSION = 3;
 // 판단 보류한 날: 분수 연산 마스터가 바뀐 날(11/17)이라 그날 한 것은 따지지 않는다 (선생님 결정).
 //   그날 기준 화면(11/18 아침)은 안 한 학생 명단을 비우고 '판단 보류'로 보여 주고, 누적에도 세지 않는다.
 //   11/19 아침 화면(11/18 한 것)부터 '오늘 할 것' 레벨 기준으로 판정한다.
@@ -207,14 +250,19 @@ function basicSkipped(start, level) {
  *   통과 못 한 기초 레벨(시작점 앞은 통과로 침)이 있으면 그것, 없으면 분수·소수에서 아직 통과 못 했고 도전이 열린 첫 레벨.
  *   L9-2 는 그 뒤 레벨을 통과했으면 통과로 친다(나중에 끼워 넣은 레벨). 모두 끝냈으면 ''.
  */
-export function todayLevel(passesOfStudent, start, day) {
+export function todayLevel(passesOfStudent, start, day, { tracks = day >= TRACKS_FROM } = {}) {
   const passed = {};
   for (const [level, date] of Object.entries(passesOfStudent || {})) if (date < day) passed[level] = true;
   const i92 = LEVEL_ORDER.indexOf('L9-2');
   if (!passed['L9-2'] && Object.keys(passed).some((lv) => LEVEL_ORDER.indexOf(lv) > i92)) passed['L9-2'] = true;
   const basic = BASIC_ORDER.find((lv) => !passed[lv] && !basicSkipped(start, lv));
   if (basic) return basic;
-  return LEVEL_ORDER.find((lv, i) => !passed[lv] && (i === 0 || passed[LEVEL_ORDER[i - 1]])) || '';
+  if (!tracks) return LEVEL_ORDER.find((lv, i) => !passed[lv] && (i === 0 || passed[LEVEL_ORDER[i - 1]])) || '';
+  // TRACKS_FROM 부터: 분수·소수 → 소수의 곱셈 → 도형의 넓이 중 통과 못 한 레벨이 남은 첫 트랙에서, 열린 첫 레벨
+  //   (mathpractice levels.js currentTrack · nextInTrackFor 와 같음)
+  const track = LOCKED_TRACKS.find((t) => t.some((lv) => !passed[lv]));
+  if (!track) return '';
+  return track.find((lv, i) => !passed[lv] && (i === 0 || passed[track[i - 1]])) || '';
 }
 
 // 수학 확인에서 항상 빼는 이름 (우리 반 탭에서 바꿀 수 있음)
@@ -518,7 +566,7 @@ export function summarizeDay(rows) {
   }
   const out = new Map();
   for (const [no, e] of by) {
-    const byLevel = (a, b) => levelIndex(a) - levelIndex(b);
+    const byLevel = (a, b) => sortIndex(a) - sortIndex(b);
     const scores = [...e.scores.keys()].sort(byLevel).map((level) => ({ level, score: e.scores.get(level) }));
     out.set(no, {
       scores,
@@ -563,10 +611,16 @@ const isLevelRule = (day) => day >= LEVEL_FROM;
 const isScoreRule = (day) => day >= SCORE_FROM;
 const isHitRule = (day) => day >= HIT_FROM;
 
-/** day 전에 그 레벨을 푼 가장 최근 날의 맞힌 개수 {date, c} (없으면 null) */
-export function lastHit(byDate, day) {
+/**
+ * day 전에 그 레벨을 푼 가장 최근 날의 맞힌 개수 {date, c} (없으면 null).
+ * size 를 주면 같은 창 크기로 잰 날만 본다 (B3·B7 처럼 문제 수가 바뀐 레벨은 바뀐 뒤 처음 푼 날이 '처음')
+ */
+export function lastHit(byDate, day, size = 0) {
   let date = '';
-  for (const d of Object.keys(byDate || {})) if (d < day && d > date) date = d;
+  for (const d of Object.keys(byDate || {})) {
+    if (size && (byDate[d].s ?? size) !== size) continue;
+    if (d < day && d > date) date = d;
+  }
   return date ? { date, c: byDate[date].c } : null;
 }
 
@@ -591,7 +645,7 @@ function judgeHitDay(day, rows, passes, hits, basicStart) {
     const seq = onNeed.map((r) => (typeof r.seq === 'string' && SEQ_RE.test(r.seq) ? r.seq : '')).join('');
     const { size } = passWindow(need);
     const c = bestWindow(seq, size);
-    const prev = lastHit(hits[no]?.[need], day);
+    const prev = lastHit(hits[no]?.[need], day, size);
     if (prev ? c > prev.c : seq.length >= size) done.add(no);
     else notBeat.set(no, { level: need, hits: c, solved: seq.length, size, prev: prev ? prev.c : null, prevDate: prev ? prev.date : '' });
   }
@@ -640,6 +694,15 @@ export function judgeDay(day, rows, accessed, passes, best = {}, hits = {}, basi
  * 분수 연산 마스터 명단 → 세는 학생 / 다 끝낸 학생 / 항상 뺄 학생 [{no, name}].
  * 이름은 우리 반 명단(roster) 이름을 먼저 쓴다. day 는 판정하는 날 (HIT_FROM 부터는 기초까지 끝내야 다 끝낸 것).
  */
+/** 다 끝낸 학생인가 (day 의 기준으로). TRACKS_FROM 부터는 세 트랙 + 기초를 모두 통과해야 */
+function isGraduated(passesOfStudent, start, day) {
+  const all = '9999-12-31'; // 통과 기록 전부를 본다
+  if (day >= TRACKS_FROM) return todayLevel(passesOfStudent, start, all, { tracks: true }) === '';
+  // L36 통과. HIT_FROM 부터는 게다가 통과 못 한 기초가 없어야 (학생 화면 '오늘 할 것'에 기초가 남음)
+  return Boolean(passesOfStudent?.[FINAL_LEVEL])
+    && (!isHitRule(day) || !isBasic(todayLevel(passesOfStudent, start, all, { tracks: false })));
+}
+
 function splitStudents(students, roster, excludeNames, passes, basicStart, day) {
   const nameByNo = new Map(roster.map((s) => [String(s.no), s.name]));
   const excludeSet = new Set(excludeNames.map((n) => String(n).trim()).filter(Boolean));
@@ -651,9 +714,7 @@ function splitStudents(students, roster, excludeNames, passes, basicStart, day) 
     const entry = { no: s.no, name };
     if (excludeSet.has(name) || excludeSet.has(s.name)) excluded.push(entry);
     // 다 끝낸 학생: L36 통과. HIT_FROM 부터는 게다가 통과 못 한 기초가 없어야 (학생 화면 '오늘 할 것'에 기초가 남음)
-    else if (passes[s.no]?.[FINAL_LEVEL] && (!isHitRule(day) || !isBasic(todayLevel(passes[s.no], basicStart[s.no], '9999-12-31')))) {
-      graduated.push(entry);
-    }
+    else if (isGraduated(passes[s.no], basicStart[s.no], day)) graduated.push(entry);
     else counted.push(entry);
   }
   return { counted, graduated, excluded };
@@ -749,7 +810,7 @@ export async function buildReport({
       const d = day.get(s.no) || { scores: [], practice: [] };
       // 그날 처음 통과한 레벨 중 가장 높은 것 = 레벨 상승
       const ups = Object.entries(passes[s.no] || {}).filter(([, date]) => date === prev).map(([level]) => level);
-      const passed = ups.sort((a, b) => levelIndex(b) - levelIndex(a))[0] || '';
+      const passed = ups.sort((a, b) => sortIndex(b) - sortIndex(a))[0] || '';
       return {
         ...s,
         levelUp: passed ? { passed, next: nextLevel(passed) } : null,
@@ -768,7 +829,8 @@ export async function buildReport({
   const doneByDay = new Map([[prev, done]]);
   const known = dayCache ? await dayCache.load(client.code) : {};
   if (known.rule !== DONE_RULE) { // 예전 기준으로 저장한 새 기준 날짜는 버리고 다시 센다
-    for (const d of Object.keys(known)) if (isStrict(d)) delete known[d];
+    const from = known.rule === PREV_DONE_RULE_2 ? TRACKS_FROM : known.rule === PREV_DONE_RULE ? RECHECK_FROM : STRICT_FROM;
+    for (const d of Object.keys(known)) if (d >= from) delete known[d];
   }
   const todo = days.filter((d) => d !== prev && !doneByDay.has(d));
   const fromCache = todo.filter((d) => Array.isArray(known[d]));
@@ -789,7 +851,9 @@ export async function buildReport({
   const counts = {};
   for (const s of counted) {
     const from = cleared[s.no] || '';
-    counts[s.no] = days.filter((d) => d > from && !isAbsent(s.no, d) && !doneByDay.get(d).has(s.no)).length;
+    // 그날 기준으로 다 끝낸 학생이었던 날은 세지 않는다 (TRACKS_FROM 전에는 L36 + 기초를 끝내면 다 끝낸 것)
+    counts[s.no] = days.filter((d) => d > from && !isAbsent(s.no, d) && !doneByDay.get(d).has(s.no)
+      && !isGraduated(passes[s.no], basicStart[s.no], d)).length;
   }
   const byCount = (a, b) => b.count - a.count || Number(a.no) - Number(b.no);
   const watch = counted
@@ -827,7 +891,7 @@ export async function buildReport({
     counts,       // 번호 → 누적 횟수 (세는 학생만)
     overLimit,    // 누적 limit 회 이상 [{no, name, count}]
     watch,        // 1회 이상 limit 회 미만 (지켜볼 학생)
-    finalLevel: FINAL_LEVEL,
+    finalLevel: prev >= TRACKS_FROM ? AREA_ORDER[AREA_ORDER.length - 1] : FINAL_LEVEL,
     fetchedAt: timeKST(now),
     fetchedDate: today,
     todayOff: cal.whyOff(today),
@@ -889,7 +953,7 @@ export async function buildTodayReport({
   const day = summarizeDay(rows);
   const levelUp = (no) => {
     const ups = Object.entries(passesNow[no] || {}).filter(([, date]) => date === today).map(([level]) => level);
-    const passed = ups.sort((a, b) => levelIndex(b) - levelIndex(a))[0] || '';
+    const passed = ups.sort((a, b) => sortIndex(b) - sortIndex(a))[0] || '';
     return passed ? { passed, next: nextLevel(passed) } : null;
   };
   const solvedCount = (no) => rows.filter((r) => r.no === no)
