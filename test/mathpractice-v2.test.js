@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildReport, buildTodayReport, addProgress, passWindow, bestWindow, todayLevel, judgeDay, parseBasicStart, nextLevel, lastHit,
-  HIT_FROM, DONE_RULE,
+  HIT_FROM, DONE_RULE, TRACKS_FROM,
 } from '../public/js/lib/mathpractice.js';
 import { fakeFirestoreFetch, SAMPLE_NAMES, kstMillis } from './fake-firestore.js';
 
@@ -344,4 +344,55 @@ test('기준이 바뀌면 11/19 부터의 날만 다시 셈 (그 전 저장본�
   assert.ok(known['2026-11-19'].includes('1'), '11/19 는 다시 셈 (1번 했다)');
   const dayQueries = fetch.calls.filter((c) => c.body.includes('"op":"EQUAL"')).map((c) => JSON.parse(c.body).structuredQuery.where.fieldFilter.value.stringValue);
   assert.ok(!dayQueries.includes('2026-11-18') && dayQueries.includes('2026-11-19'));
+});
+
+// ---- 소수의 곱셈 · 도형의 넓이 트랙까지 세기 (11/23 부터) ----
+
+const ALL_BASIC = { sub: '-', mul: '-', div: '-' };
+const passedAll = (levels, date = '2026-10-01') => Object.fromEntries(levels.map((lv) => [lv, date]));
+const L_ALL = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7', 'L8', 'L9', 'L9-2', 'L10', 'L11', 'L12', 'L13', 'L14', 'L15', 'L16', 'L17', 'L18',
+  'L19', 'L20', 'L21', 'L22', 'L23', 'L24', 'L25', 'L26', 'L27', 'L28', 'L29', 'L30', 'L31', 'L32', 'L33', 'L34', 'L35', 'L36'];
+
+test('오늘 할 것: 11/23 부터 분수·소수 다음은 소수의 곱셈 → 도형의 넓이 (그 전 날은 다 끝냄)', () => {
+  assert.equal(TRACKS_FROM, '2026-11-23');
+  const p = passedAll([...L_ALL, 'B9', 'B10']);
+  assert.equal(todayLevel(p, ALL_BASIC, '2026-11-20'), '', '11/20 은 예전처럼 L36 + 기초 끝 = 다 끝냄');
+  assert.equal(todayLevel(p, ALL_BASIC, '2026-11-23'), 'D1');
+  assert.equal(todayLevel({ ...p, D1: '2026-11-20', D2: '2026-11-21' }, ALL_BASIC, '2026-11-23'), 'D3');
+  const dDone = passedAll(['D1', 'D2', 'D3', 'D4', 'D5', 'D6']);
+  assert.equal(todayLevel({ ...p, ...dDone, A1: '2026-11-01' }, ALL_BASIC, '2026-11-23'), 'A2');
+  assert.equal(todayLevel({ ...p, ...dDone, ...passedAll(['A1', 'A2', 'A3', 'A4', 'A5', 'A6']) }, ALL_BASIC, '2026-11-23'), '');
+  assert.equal(todayLevel({ ...p, D1: '2026-11-01' }, ALL_BASIC, '2026-11-23'), 'D2', 'D 를 먼저 했어도 순서대로');
+  assert.equal(todayLevel({ L1: '2026-11-01', D1: '2026-11-01' }, ALL_BASIC, '2026-11-23'), 'B9', '기초가 남으면 기초');
+  assert.equal(nextLevel('D6'), '');
+  assert.equal(nextLevel('A1'), 'A2');
+});
+
+test('소수의 곱셈: 이어 붙이는 창으로 통과, D3 예전 20문제 판은 20문제 중 18개', () => {
+  const passes = {};
+  const windows = {};
+  addProgress(passes, windows, [row('1', '2026-11-23', 'D1', ones(10), { ts: 1 }), row('1', '2026-11-23', 'D1', ones(8), { ts: 2 })]);
+  assert.equal(passes['1'].D1, '2026-11-23', '20문제 레벨: 이어서 18개');
+  addProgress(passes, windows, [row('2', '2026-11-19', 'D3', `${ones(9)}${'0'.repeat(11)}`)]);
+  assert.equal(passes['2']?.D3, undefined, '예전 20문제 판: 9개로는 통과 아님');
+  addProgress(passes, windows, [row('2', '2026-11-23', 'D3', `${ones(9)}0`)]);
+  assert.equal(passes['2'].D3, '2026-11-23', '10문제 레벨: 최근 10문제 중 9개');
+});
+
+test('11/23 부터 L36 + 기초를 끝낸 학생도 셈 (소수의 곱셈 D1 해야), 그 전 날 화면은 그대로 뺌', async () => {
+  const db = hitDb(); // 5번: L36 통과 + 기초 끝 → L1~L35 통과 기록도 넣음 (실제로는 앞 레벨을 통과해야 L36 이 열림)
+  for (const lv of L_ALL.slice(0, -1)) db.TEST01.results.push({ studentNo: '5', dateKey: '2026-09-01', level: lv, mode: 'challenge', score: 300 });
+  const am20 = await buildReport({ classCode: 'TEST01', now: new Date('2026-11-19T23:30:00Z'), countStart: '2026-11-18', fetchImpl: fakeFirestoreFetch(db) });
+  assert.deepEqual(am20.graduated.map((s) => s.no), ['5']);
+  db.TEST01.results.push({ studentNo: '5', dateKey: '2026-11-23', level: 'L36', seq: ones(10), mode: 'aborted', score: null, ts: kstMillis('2026-11-23', 10) });
+  const am24 = await buildReport({ classCode: 'TEST01', now: new Date('2026-11-23T23:30:00Z'), countStart: '2026-11-18', fetchImpl: fakeFirestoreFetch(db) });
+  assert.equal(am24.dateKey, '2026-11-23');
+  assert.deepEqual(am24.graduated, []);
+  const five = am24.missing.find((s) => s.no === '5');
+  assert.deepEqual(five.lower, { did: 'L36', need: 'D1' }, 'L36 만 다시 풂 → D1 해야');
+  assert.equal(am24.finalLevel, 'A6');
+  assert.equal(am24.counts['5'], 1, '11/23 하루만 셈 (11/18~20 은 다 끝낸 학생이라 안 셈)');
+  const t = await buildTodayReport({ classCode: 'TEST01', now: new Date('2026-11-23T03:00:00Z'), fetchImpl: fakeFirestoreFetch(db) });
+  assert.deepEqual(t.graduated, []);
+  assert.equal(t.trying.find((s) => s.no === '5').need, 'D1');
 });
