@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildReport, addProgress, passWindow, bestWindow, todayLevel, judgeDay, parseBasicStart, nextLevel, lastHit,
+  buildReport, buildTodayReport, addProgress, passWindow, bestWindow, todayLevel, judgeDay, parseBasicStart, nextLevel, lastHit,
   HIT_FROM, DONE_RULE,
 } from '../public/js/lib/mathpractice.js';
 import { fakeFirestoreFetch, SAMPLE_NAMES, kstMillis } from './fake-firestore.js';
@@ -224,4 +224,71 @@ test('판단 보류: 11/17 한 것은 따지지 않음 (11/18 아침 화면은 �
   const am20 = await buildReport({ classCode: 'TEST01', now: new Date('2026-11-19T23:30:00Z'), countStart: '2026-11-16', fetchImpl: fakeFirestoreFetch(db) });
   assert.equal(am20.hold, false);
   assert.equal(am20.countedDays, 3, '11/16 · 11/18 · 11/19 (11/17 뺌)');
+});
+
+// ---- 오늘 현황 (버튼을 누를 때만) ----
+
+test('오늘 현황: 오늘 기록만 새로 읽고 했음 / 하는 중 / 아직 안 함으로 나눔', async () => {
+  const db = hitDb();
+  const today = '2026-11-20';
+  const r = (no, level, seq, extra = {}) => ({
+    studentNo: no, dateKey: today, level, seq, mode: 'aborted', score: null, totalQuestions: seq.length, ts: kstMillis(today, 10), ...extra,
+  });
+  db.TEST01.results.push(
+    r('1', 'B1', `${ones(14)}000`),                         // 11/19 13개 → 14개: 했음
+    r('3', 'L1', ones(5)),                                   // B1 해야 하는데 L1: 하는 중(다른 레벨)
+    r('6', 'B1', `${ones(18)}00`, { mode: 'challenge', score: 90 }), // 한 판 18개 → 통과: 했음, 레벨 상승
+  );
+  let base = null;
+  let pass = null;
+  const baseCache = { load: async () => base && JSON.parse(JSON.stringify(base)), save: async (_c, v) => { base = JSON.parse(JSON.stringify(v)); } };
+  const passCache = { load: async () => pass && JSON.parse(JSON.stringify(pass)), save: async (_c, v) => { pass = JSON.parse(JSON.stringify(v)); } };
+  const now = new Date('2026-11-20T05:00:00Z'); // 14:00 KST
+  await buildReport({ classCode: 'TEST01', now: new Date('2026-11-19T23:30:00Z'), fetchImpl: fakeFirestoreFetch(db), baseCache, passCache });
+  const savedBase = JSON.stringify(base);
+
+  const fetch = fakeFirestoreFetch(db);
+  const t = await buildTodayReport({
+    classCode: 'TEST01', now, fetchImpl: fetch, baseCache, passCache, absent: { '2026-11-20_4': true },
+  });
+  assert.equal(fetch.calls.length, 1, '받아 둔 것이 있으면 오늘 기록만 한 번 읽음');
+  assert.match(decodeURIComponent(fetch.calls[0].body), /2026-11-20/);
+  assert.equal(t.dateKey, today);
+  assert.deepEqual(t.done.map((s) => s.no), ['1', '6']);
+  assert.deepEqual(t.done.find((s) => s.no === '6').levelUp, { passed: 'B1', next: '' });
+  assert.deepEqual(t.trying.map((s) => s.no), ['3']);
+  assert.deepEqual(t.trying[0].lower, { did: 'L1', need: 'B1' });
+  assert.deepEqual(t.notYet.map((s) => s.no), ['2'], '4번은 오늘 결석, 5번은 졸업');
+  assert.equal(t.notYet[0].need, 'L2');
+  assert.deepEqual(t.absent.map((s) => s.no), ['4']);
+  assert.deepEqual(t.graduated.map((s) => s.no), ['5']);
+  assert.equal(t.total, 4);
+  assert.equal(t.records, 3);
+  assert.equal(JSON.stringify(base), savedBase, '받아 둔 것은 바꾸지 않음');
+});
+
+test('오늘 현황: 분수 레벨은 어제까지의 창에 오늘 기록을 이어 붙여 통과를 봄', async () => {
+  const db = hitDb();
+  db.TEST01.results.push(
+    { studentNo: '2', dateKey: '2026-11-20', level: 'L2', seq: ones(10), mode: 'aborted', score: null, ts: kstMillis('2026-11-20', 10) },
+    { studentNo: '2', dateKey: '2026-11-23', level: 'L2', seq: ones(8), mode: 'aborted', score: null, ts: kstMillis('2026-11-23', 10) },
+  );
+  let base = null;
+  let pass = null;
+  const baseCache = { load: async () => base, save: async (_c, v) => { base = JSON.parse(JSON.stringify(v)); } };
+  const passCache = { load: async () => pass && JSON.parse(JSON.stringify(pass)), save: async (_c, v) => { pass = JSON.parse(JSON.stringify(v)); } };
+  await buildReport({ classCode: 'TEST01', now: new Date('2026-11-22T23:30:00Z'), fetchImpl: fakeFirestoreFetch(db), baseCache, passCache });
+  const t = await buildTodayReport({ classCode: 'TEST01', now: new Date('2026-11-23T03:00:00Z'), fetchImpl: fakeFirestoreFetch(db), baseCache, passCache });
+  const two = t.done.find((s) => s.no === '2');
+  assert.ok(two, '11/20 의 10개 + 오늘 8개 = 18/18 → 통과');
+  assert.deepEqual(two.levelUp, { passed: 'L2', next: 'L3' });
+});
+
+test('오늘 현황: 받아 둔 것이 없으면 반 정보·명단·통과 기록도 받아 옴', async () => {
+  const fetch = fakeFirestoreFetch(hitDb());
+  const t = await buildTodayReport({ classCode: 'TEST01', now: new Date('2026-11-20T05:00:00Z'), fetchImpl: fetch });
+  assert.ok(fetch.calls.length > 1);
+  assert.equal(t.total, 5);
+  assert.equal(t.notYet.length, 5, '오늘 기록 없음');
+  await assert.rejects(buildTodayReport({ classCode: '' }), (e) => e.code === 'nocode');
 });

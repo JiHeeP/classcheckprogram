@@ -31,7 +31,14 @@ async function main() {
   const missingCount = 4;
   const mathDb = sampleDb(prev);
   for (const level of ['L3', 'L4', 'L5']) mathDb.TEST01.results.push({ dateKey: '2026-09-01', studentNo: '6', mode: 'challenge', level, score: 200 });
+  // 오늘 기록: 1번은 B1 한 판 20개(통과 → 했음), 2번은 B1 대신 L1 만(하는 중)
+  const today = todayKST();
+  mathDb.TEST01.results.push(
+    { dateKey: today, studentNo: '1', mode: 'aborted', level: 'B1', seq: '1'.repeat(20), totalQuestions: 20 },
+    { dateKey: today, studentNo: '2', mode: 'aborted', level: 'L1', seq: '11111', totalQuestions: 5 },
+  );
   const fakeMath = fakeFirestoreFetch(mathDb);
+  const todayCalls = () => fakeMath.calls.filter((c) => c.body.includes(`"stringValue":"${today}"`)).length;
 
   // 프록시가 있는 환경이면 localhost 만 프록시를 거치지 않게 (Playwright 의 proxy 옵션은 localhost 도 프록시로 보냄)
   const args = process.env.HTTPS_PROXY
@@ -173,6 +180,18 @@ async function main() {
   assert(prog[0].includes('L3 통과 → L4') && prog[0].includes('L3 100점'), `레벨 상승·점수 같이 보임 (${prog[0]})`);
   assert(prog.some((t) => t.includes('L3 연습')) && !prog.some((t) => t.includes('최하은')), '연습만 구분, 접속만 한 학생은 레벨·점수에 없음');
   await shot(page, '03-math');
+
+  console.log('오늘 현황: 버튼을 누를 때만');
+  assert(todayCalls() === 0, '버튼을 누르기 전에는 오늘 기록을 읽지 않음');
+  await page.getByRole('button', { name: '오늘 현황 조회' }).click();
+  await page.locator('.today-group.done').waitFor({ timeout: 10000 });
+  assert(todayCalls() === 1, '버튼을 누르면 오늘 기록을 한 번 읽음');
+  assert((await page.locator('.today-group.done').textContent()).includes('김민준'), '오늘 기준을 넘은 학생은 했음');
+  const trying = await page.locator('.today-group.trying').textContent();
+  assert(trying.includes('이서연') && trying.includes('L1 함 · B1 해야'), `하는 중 + 까닭 (${trying.trim()})`);
+  assert((await page.locator('.today-group.notyet').textContent()).includes('박도윤'), '오늘 기록 없는 학생은 아직 안 함');
+  await page.getByRole('button', { name: '다시 조회' }).waitFor();
+  await shot(page, '03-math-today');
 
   console.log('누적 벌 대상: 설정 → 큰 이름 → 해제');
   await page.getByRole('link', { name: '우리 반' }).click();

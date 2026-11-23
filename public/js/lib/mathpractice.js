@@ -555,7 +555,7 @@ async function loadPasses(client, passCache, today) {
   if (passCache) {
     await passCache.save(client.code, { v: PASS_VERSION, through: addDays(today, -1), passes, best, windows, hits }).catch(() => {});
   }
-  return { passes, best, hits };
+  return { passes, best, hits, windows };
 }
 
 const isStrict = (day) => day >= STRICT_FROM;
@@ -637,6 +637,29 @@ export function judgeDay(day, rows, accessed, passes, best = {}, hits = {}, basi
 }
 
 /**
+ * 분수 연산 마스터 명단 → 세는 학생 / 다 끝낸 학생 / 항상 뺄 학생 [{no, name}].
+ * 이름은 우리 반 명단(roster) 이름을 먼저 쓴다. day 는 판정하는 날 (HIT_FROM 부터는 기초까지 끝내야 다 끝낸 것).
+ */
+function splitStudents(students, roster, excludeNames, passes, basicStart, day) {
+  const nameByNo = new Map(roster.map((s) => [String(s.no), s.name]));
+  const excludeSet = new Set(excludeNames.map((n) => String(n).trim()).filter(Boolean));
+  const counted = [];
+  const graduated = [];
+  const excluded = [];
+  for (const s of students) {
+    const name = nameByNo.get(s.no) || s.name;
+    const entry = { no: s.no, name };
+    if (excludeSet.has(name) || excludeSet.has(s.name)) excluded.push(entry);
+    // 다 끝낸 학생: L36 통과. HIT_FROM 부터는 게다가 통과 못 한 기초가 없어야 (학생 화면 '오늘 할 것'에 기초가 남음)
+    else if (passes[s.no]?.[FINAL_LEVEL] && (!isHitRule(day) || !isBasic(todayLevel(passes[s.no], basicStart[s.no], '9999-12-31')))) {
+      graduated.push(entry);
+    }
+    else counted.push(entry);
+  }
+  return { counted, graduated, excluded };
+}
+
+/**
  * 이전 등교일에 수학을 하지 않은 학생 목록.
  * - roster 가 있으면 번호가 같은 학생의 이름은 우리 반 명단 이름을 쓴다.
  * - excludeNames 에 있는 이름은 세지 않는다.
@@ -705,21 +728,7 @@ export async function buildReport({
 
   const isAbsent = (no, day) => absent[absentKey(day, no)] === true;
 
-  const nameByNo = new Map(roster.map((s) => [String(s.no), s.name]));
-  const excludeSet = new Set(excludeNames.map((n) => String(n).trim()).filter(Boolean));
-  const counted = [];
-  const graduated = [];
-  const excluded = [];
-  for (const s of students) {
-    const name = nameByNo.get(s.no) || s.name;
-    const entry = { no: s.no, name };
-    if (excludeSet.has(name) || excludeSet.has(s.name)) excluded.push(entry);
-    // 다 끝낸 학생: L36 통과. HIT_FROM 부터는 게다가 통과 못 한 기초가 없어야 (학생 화면 '오늘 할 것'에 기초가 남음)
-    else if (passes[s.no]?.[FINAL_LEVEL] && (!isHitRule(prev) || !isBasic(todayLevel(passes[s.no], basicStart[s.no], '9999-12-31')))) {
-      graduated.push(entry);
-    }
-    else counted.push(entry);
-  }
+  const { counted, graduated, excluded } = splitStudents(students, roster, excludeNames, passes, basicStart, prev);
   // 이전 등교일에 결석으로 적어 둔 학생은 그날 명단에서 뺀다 (했어도 결석으로 적었으면 뺌)
   const absentPrev = counted.filter((s) => isAbsent(s.no, prev));
   const present = counted.filter((s) => !isAbsent(s.no, prev));
@@ -823,5 +832,98 @@ export async function buildReport({
     fetchedDate: today,
     todayOff: cal.whyOff(today),
     hold,         // 판단 보류한 날이면 true (안 한 학생 명단을 비움, 누적에도 안 셈)
+  };
+}
+
+/**
+ * 오늘(지금까지) 현황 — 선생님이 버튼을 누를 때만 부른다 (분수 연산 마스터 읽기 비용).
+ *   분수 연산 마스터에서 새로 읽는 것은 오늘 기록(results, dateKey = 오늘) 한 번뿐이다.
+ *   반 정보·명단·어제까지의 통과 기록은 오늘 받아 둔 baseCache 를, 이어 붙이는 창은 passCache 를 쓴다
+ *   (없으면 buildReport 처럼 받아 옴). 접속 기록(logs)은 읽지 않는다.
+ *   판정은 이전 등교일과 같은 '오늘 할 것 레벨 · 맞힌 개수' 기준 (judgeDay). 아직 하는 중일 수 있어서
+ *   done(오늘 기준 넘음) / trying(풀었지만 아직 못 넘음, 까닭 lower·notBeat) / notYet(오늘 기록 없음) 으로 나눈다.
+ *   결석(absent 에 오늘 날짜)·항상 뺄 이름·다 끝낸 학생은 뺀다. 결과는 저장하지 않는다.
+ */
+export async function buildTodayReport({
+  classCode, roster = [], excludeNames = [], absent = {}, now = new Date(), fetchImpl, base,
+  baseCache = null, passCache = null,
+} = {}) {
+  if (!classCode) throw new MathError('nocode', '우리 반 탭에서 수학 반 코드를 먼저 적어 주세요', 400);
+  const client = new MathPracticeClient(classCode, { fetchImpl, base });
+  const today = todayKST(now);
+  const yesterday = addDays(today, -1);
+
+  let saved = baseCache ? await baseCache.load(client.code).catch(() => null) : null;
+  if (saved?.date !== today || saved.v !== PASS_VERSION || !isObj(saved.passes) || !isObj(saved.hits)
+    || !isObj(saved.cls?.basicStart) || !Array.isArray(saved.students)) saved = null;
+  let cls, students, passes, hits, windows;
+  let rows;
+  if (saved) {
+    ({ cls, students, passes, hits } = saved);
+    const [pass, todayRows] = await Promise.all([
+      passCache ? passCache.load(client.code).catch(() => null) : null, client.fetchDayResults(today),
+    ]);
+    // 창은 baseCache 와 같은 날(어제)까지 넣은 것이어야 오늘 기록을 이어 붙일 수 있다. 아니면 오늘 몫만으로 센다
+    windows = pass?.v === PASS_VERSION && pass.through === yesterday && isObj(pass.windows) ? pass.windows : {};
+    rows = todayRows;
+  } else {
+    let history;
+    [cls, students, history, rows] = await Promise.all([
+      client.fetchClass(), client.fetchStudents(), loadPasses(client, passCache, today), client.fetchDayResults(today),
+    ]);
+    ({ passes, hits, windows } = history);
+  }
+  rows = rows.filter((r) => r.dateKey === today);
+  const basicStart = cls.basicStart || {};
+
+  // 오늘 기록을 더한 통과 기록 (저장본은 건드리지 않게 복사). hits 는 오늘 전 것만 비교에 쓴다
+  const passesNow = JSON.parse(JSON.stringify(passes));
+  addProgress(passesNow, JSON.parse(JSON.stringify(windows || {})), rows, {});
+  const { done, lower, notBeat } = judgeDay(today, rows, new Set(), passesNow, {}, hits, basicStart);
+
+  const { counted, graduated, excluded } = splitStudents(students, roster, excludeNames, passesNow, basicStart, today);
+  const isAbsent = (no) => absent[absentKey(today, no)] === true;
+  const absentToday = counted.filter((s) => isAbsent(s.no));
+  const present = counted.filter((s) => !isAbsent(s.no));
+  const withRecord = new Set(rows.map((r) => r.no));
+  const day = summarizeDay(rows);
+  const levelUp = (no) => {
+    const ups = Object.entries(passesNow[no] || {}).filter(([, date]) => date === today).map(([level]) => level);
+    const passed = ups.sort((a, b) => levelIndex(b) - levelIndex(a))[0] || '';
+    return passed ? { passed, next: nextLevel(passed) } : null;
+  };
+  const solvedCount = (no) => rows.filter((r) => r.no === no)
+    .reduce((n, r) => n + (r.seq && SEQ_RE.test(r.seq) ? r.seq.length : (r.totalQuestions || 0)), 0);
+  const entry = (s) => ({
+    ...s,
+    need: todayLevel(passes[s.no], basicStart[s.no], today), // 오늘 할 것 레벨
+    levelUp: levelUp(s.no),
+    solved: solvedCount(s.no),
+    scores: day.get(s.no)?.scores || [],
+    practice: day.get(s.no)?.practice || [],
+    lower: lower.get(s.no) || null,
+    notBeat: notBeat.get(s.no) || null,
+  });
+  const doneList = present.filter((s) => done.has(s.no)).map(entry);
+  const trying = present.filter((s) => withRecord.has(s.no) && !done.has(s.no)).map(entry);
+  const notYet = present.filter((s) => !withRecord.has(s.no)).map((s) => ({
+    ...s, need: todayLevel(passes[s.no], basicStart[s.no], today),
+  }));
+
+  return {
+    classCode: client.code,
+    dateKey: today,
+    dateLabel: label(today),
+    total: present.length,
+    done: doneList,     // 오늘 기준을 넘은 학생 [{no, name, need, levelUp, solved, …}]
+    trying,             // 풀었지만 아직 못 넘은 학생 (lower: 다른 레벨만, notBeat: 맞힌 개수가 아직 안 늚)
+    notYet,             // 오늘 기록이 없는 학생 [{no, name, need}]
+    levelUps: [...doneList, ...trying].filter((s) => s.levelUp).length,
+    absent: absentToday,
+    graduated,
+    excluded,
+    hitRule: isHitRule(today),
+    records: rows.length, // 읽은 오늘 기록 수 (비용 확인용)
+    fetchedAt: timeKST(now),
   };
 }

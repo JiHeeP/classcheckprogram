@@ -15,6 +15,9 @@ const m = {
   loading: false,
   loadedAt: 0,
   timer: null,
+  today: null,        // 오늘 현황 (버튼을 누를 때만 받음 — 분수 연산 마스터 읽기 비용)
+  todayError: null,
+  todayLoading: false,
 };
 
 function signature(room) {
@@ -155,6 +158,60 @@ function absenceSection(ctx, r) {
       () => toggle(s), { key: `absent:${date}:${s.no}` }))));
 }
 
+/** 오늘 현황 받기 — 버튼을 누를 때만. 자동으로 다시 받지 않는다 */
+async function loadToday(ctx) {
+  if (m.todayLoading) return;
+  m.todayLoading = true;
+  m.todayError = null;
+  ctx.rerender();
+  try {
+    m.today = await ctx.store.getMathToday(ctx.state.room);
+  } catch (e) {
+    m.todayError = e;
+  } finally {
+    m.todayLoading = false;
+    if (ctx.tab === 'math') ctx.rerender();
+  }
+}
+
+/** 오늘(지금까지) 현황: 했음 / 하는 중(아직 못 넘음) / 아직 안 함 */
+function todaySection(ctx) {
+  if (document.body.classList.contains('popup')) return null;
+  const t = m.today && m.today.dateKey === todayKST() ? m.today : null;
+  const btn = onTap(el('button.btn.primary', { type: 'button', disabled: m.todayLoading },
+    m.todayLoading ? '조회 중…' : t ? '다시 조회' : '오늘 현황 조회'), () => loadToday(ctx));
+  const head = el('div.today-head',
+    el('h2.progress-title', `오늘(${shortDate(todayKST())}) 현황`,
+      el('small', ' · 버튼을 누를 때만 분수 연산 마스터에서 받아요')),
+    btn);
+  const err = m.todayError ? el('p.warn', `오늘 현황을 받아오지 못했어요. (${m.todayError.message || ''})`) : null;
+  if (!t) {
+    return el('section.today', head, err,
+      el('p.muted.small', '지금까지 오늘 수학을 누가 했는지 봐요. 누를 때마다 분수 연산 마스터의 오늘 기록을 한 번 읽어요(무료 읽기 한도 사용). 자동으로 다시 받지 않아요.'));
+  }
+  const group = (cls, label, list, chip) => (list.length
+    ? el(`div.today-group.${cls}`, el('h3.today-label', `${label} ${list.length}명`), el('div.today-chips', list.map(chip)))
+    : null);
+  const who = (s) => [el('small', `${s.no}번`), s.name];
+  const notYet = group('notyet', '아직 안 함', t.notYet, (s) => el('span.today-chip', ...who(s),
+    s.need ? el('small.miss-reason', `${s.need} 해야`) : null));
+  const trying = group('trying', '하는 중 (아직 못 넘음)', t.trying, (s) => el('span.today-chip', ...who(s),
+    el('small.miss-reason', s.lower ? `${s.lower.did} 함 · ${s.lower.need} 해야` : s.notBeat ? notBeatText(s.notBeat) : `${s.solved}문제`)));
+  const done = group('done', '했음', t.done, (s) => el('span.today-chip', ...who(s),
+    s.levelUp ? el('small.miss-reason', s.levelUp.next ? `⬆ ${s.levelUp.passed}→${s.levelUp.next}` : `⬆ ${s.levelUp.passed} 통과`) : null));
+  const skipped = [
+    t.absent.length ? `오늘 결석 ${t.absent.length}명: ${t.absent.map((s) => s.name).join(', ')}` : '',
+    t.graduated.length ? `모든 레벨 통과 ${t.graduated.length}명` : '',
+    t.excluded.length ? `항상 제외: ${t.excluded.map((s) => s.name).join(', ')}` : '',
+  ].filter(Boolean);
+  return el('section.today', head, err,
+    el('p.math-notes', `${t.total}명 중 했음 ${t.done.length}명 · 하는 중 ${t.trying.length}명 · 아직 ${t.notYet.length}명`
+      + `${t.levelUps ? ` · ⬆ 레벨 상승 ${t.levelUps}명` : ''} · ${t.fetchedAt} 조회`),
+    notYet, trying, done,
+    skipped.length ? el('p.muted.small', `세지 않음 — ${skipped.join(' · ')}`) : null,
+    el('p.muted.small', `이전 등교일과 같은 기준(오늘 할 것 레벨을 통과하거나 맞힌 개수가 전날보다 늘기)으로 지금까지 푼 것만 봐요. 하루가 끝나지 않아서 바뀔 수 있어요. 오늘 기록 ${t.records}건을 읽었어요.`));
+}
+
 /** 이전 등교일에 한 학생의 레벨 상승·점수 */
 function progressSection(r) {
   if (!r.progress?.length) return null;
@@ -198,6 +255,8 @@ export function render(root, ctx, { changedTab } = {}) {
     if (room.mathCode !== m.code) {
       m.report = null; // 다른 반이면 이전 결과를 보여 주지 않음. 같은 반이면 새 결과가 올 때까지 이전 결과를 그대로 둠
       m.error = null;
+      m.today = null;
+      m.todayError = null;
     }
     m.code = room.mathCode;
     m.sig = sig;
@@ -268,6 +327,7 @@ export function render(root, ctx, { changedTab } = {}) {
     el('p.muted.math-notes', notes.filter(Boolean).join(' · ')),
     upNote, skipNote, watchNote, warn, offNote,
     penaltySection(ctx, r),
+    todaySection(ctx),
     progressSection(r),
     absenceSection(ctx, r),
     el('p.muted.small', '설날·추석·재량휴업일처럼 해마다 바뀌는 쉬는 날은 우리 반 탭의 "등교 안 하는 날"에 적어 주세요.')));
