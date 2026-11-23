@@ -19,7 +19,7 @@ import {
   validateCountStart, validateLimit, MARK,
 } from './lib/model.js';
 import {
-  buildReport, MathError, MathPracticeClient, absentKey, DONE_RULE, DEFAULT_EXCLUDE_TEXT, DEFAULT_COUNT_START, DEFAULT_LIMIT, parseNames,
+  buildReport, buildTodayReport, MathError, MathPracticeClient, absentKey, DONE_RULE, DEFAULT_EXCLUDE_TEXT, DEFAULT_COUNT_START, DEFAULT_LIMIT, parseNames,
 } from './lib/mathpractice.js';
 import { parseDate, parseOffDays, todayKST } from './lib/schoolday.js';
 
@@ -389,6 +389,30 @@ export function createStore(fs, db, room = 'main') {
     }
   }
 
+  /**
+   * 오늘(지금까지) 수학 현황. 선생님이 버튼을 누를 때만 부른다 — 분수 연산 마스터에서 오늘 기록을 새로 읽는다.
+   * 결과는 저장하지 않는다 (다른 기기와 나누지 않음).
+   */
+  async function getMathToday(room, { fetchImpl, base, at = new Date() } = {}) {
+    if (!room.mathCode) throw new AppError('nocode', '우리 반 탭에서 수학 반 코드를 먼저 적어 주세요');
+    try {
+      return await buildTodayReport({
+        classCode: room.mathCode,
+        roster: room.roster,
+        excludeNames: parseNames(room.mathExcludeText),
+        absent: room.mathAbsent || {},
+        baseCache,
+        passCache,
+        now: at,
+        fetchImpl,
+        base,
+      });
+    } catch (e) {
+      if (e instanceof MathError) throw new AppError(e.code, e.message);
+      throw e;
+    }
+  }
+
   async function mathStudents(code, { fetchImpl, base } = {}) {
     const c = validateMathCode(code);
     if (!c) throw new AppError('invalid', '반 코드를 적어 주세요');
@@ -476,6 +500,7 @@ export function createStore(fs, db, room = 'main') {
     pick,
     cancelPick,
     getMath,
+    getMathToday,
     clearMathCount,
     setMathAbsent,
     mathStudents,

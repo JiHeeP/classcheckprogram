@@ -350,6 +350,39 @@ h1, h2, p { margin: 0; }
 .popup .penalty-count { font-size: 16px; }
 .popup .view { overflow-y: auto; }
 
+/* ---- 오늘 현황 (버튼을 누를 때만) ---- */
+.today {
+  margin-top: 8px;
+  border: 2px solid var(--accent);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: clamp(12px, 1.4vw, 24px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.today-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.today-group { display: flex; flex-direction: column; gap: 6px; }
+.today-label { font-size: clamp(16px, 1.4vw, 24px); font-weight: 800; }
+.today-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.today-chip {
+  font-size: clamp(18px, 1.8vw, 32px);
+  font-weight: 800;
+  border-radius: 14px;
+  padding: 6px 14px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.today-chip small { font-size: .55em; font-weight: 700; }
+.today-chip small.miss-reason { padding: .1em .45em; border-radius: .6em; background: rgba(0,0,0,.08); font-weight: 600; opacity: .85; }
+.today-group.notyet .today-label { color: var(--danger); }
+.today-group.notyet .today-chip { background: var(--danger-soft); color: var(--danger); }
+.today-group.trying .today-label { color: var(--warn); }
+.today-group.trying .today-chip { background: var(--warn-soft); color: var(--warn); }
+.today-group.done .today-label { color: var(--done); }
+.today-group.done .today-chip { background: var(--done-soft); color: var(--done); font-size: clamp(15px, 1.3vw, 22px); }
+
 /* ---- 이전 등교일 레벨·점수 ---- */
 .progress {
   margin-top: 8px;
