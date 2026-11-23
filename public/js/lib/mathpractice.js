@@ -31,7 +31,8 @@ export function passScore(level) {
 //   값은 도전 문제 수(chalQ). 통과는 '한 판 안'에서만 판정한다 (아래 passWindow)
 export const BASIC_LINES = { sub: ['B1'], mul: ['B2', 'B3', 'B4'], div: ['B5', 'B6', 'B7', 'B8'], fm: ['B9', 'B10'] };
 export const BASIC_ORDER = [...BASIC_LINES.sub, ...BASIC_LINES.mul, ...BASIC_LINES.div, ...BASIC_LINES.fm];
-const BASIC_CHAL_Q = { B1: 20, B2: 20, B3: 20, B4: 10, B5: 20, B6: 20, B7: 20, B8: 10, B9: 10, B10: 10 };
+//   B3·B7 은 2026-11-19 에 20문제 → 10문제로 줄었다 (mathpractice levels.js). 그 전의 20문제 판은 그때 규칙(20문제 중 18개)으로 본다
+const BASIC_CHAL_Q = { B1: 20, B2: 20, B3: 10, B4: 10, B5: 20, B6: 20, B7: 10, B8: 10, B9: 10, B10: 10 };
 const CHAL_Q = { ...LEVEL_CHAL_Q, ...BASIC_CHAL_Q };
 const isBasic = (level) => Object.prototype.hasOwnProperty.call(BASIC_CHAL_Q, level);
 
@@ -54,6 +55,13 @@ export function nextLevel(level) {
 // ---------------------------------------------------------------------------
 
 const allowedWrong = (level) => (CHAL_Q[level] <= 10 ? 1 : 2);
+
+/**
+ * 판이 지금 문제 수보다 길면 예전에 더 긴 판(20문제)으로 푼 기록이다 (B3·B7: 2026-11-19 20 → 10).
+ * 그런 판은 그때 규칙(20문제 중 18개)으로 본다 — mathpractice runPassed 와 같음
+ */
+const OLD_WINDOW = { size: 20, need: 18 };
+const isOldRun = (level, seq) => isBasic(level) && seq.length > CHAL_Q[level];
 
 /** 통과 판정 창 {size, need, run}. run: 한 판 안에서만 판정(기초) */
 export function passWindow(level) {
@@ -92,6 +100,7 @@ const byTime = (a, b) => (a.dateKey < b.dateKey ? -1 : a.dateKey > b.dateKey ? 1
  */
 export function addProgress(passes, windows, rows, hits = {}) {
   const daySeq = new Map(); // '번호|레벨|날짜' → 그날 이어 붙인 seq
+  const dayOld = new Set(); // 그날 예전 긴 판(20문제)이 있는 '번호|레벨|날짜' → 맞힌 개수를 20문제 창으로 잼
   for (const r of [...rows].sort(byTime)) {
     if (!CHAL_Q[r.level] || !r.dateKey || (r.mode !== 'challenge' && r.mode !== 'aborted')) continue;
     const mine = passes[r.no] || (passes[r.no] = {});
@@ -99,9 +108,10 @@ export function addProgress(passes, windows, rows, hits = {}) {
     if (typeof r.seq === 'string' && SEQ_RE.test(r.seq)) {
       const key = `${r.no}|${r.level}|${r.dateKey}`;
       daySeq.set(key, (daySeq.get(key) || '') + r.seq);
+      if (isOldRun(r.level, r.seq)) dayOld.add(key);
       const w = passWindow(r.level);
       if (w.run) {
-        if (countOnes(r.seq) >= w.need) pass();
+        if (countOnes(r.seq) >= (isOldRun(r.level, r.seq) ? OLD_WINDOW.need : w.need)) pass();
       } else {
         const myWin = windows[r.no] || (windows[r.no] = {});
         let h = myWin[r.level] || '';
@@ -119,9 +129,11 @@ export function addProgress(passes, windows, rows, hits = {}) {
   for (const [key, seq] of daySeq) {
     const [no, level, date] = key.split('|');
     const byDate = ((hits[no] || (hits[no] = {}))[level] || (hits[no][level] = {}));
+    const size = dayOld.has(key) ? OLD_WINDOW.size : passWindow(level).size;
     const prev = byDate[date] || { c: 0, n: 0 };
     // 같은 날 기록이 나눠 들어와도(드묾) 창은 그날 몫끼리만 — 뒤에 온 몫은 따로 재서 큰 값을 남긴다
-    byDate[date] = { c: Math.max(prev.c, bestWindow(seq, passWindow(level).size)), n: prev.n + seq.length };
+    // s: 맞힌 개수를 잰 창 크기. 창 크기가 다른 날(문제 수가 바뀌기 전)끼리는 비교하지 않는다
+    byDate[date] = { c: Math.max(prev.c, bestWindow(seq, size)), n: prev.n + seq.length, s: size };
   }
   return { passes, windows, hits };
 }
@@ -165,10 +177,14 @@ export const STRICT_FROM = '2026-11-02';
 export const LEVEL_FROM = '2026-11-03';
 export const SCORE_FROM = '2026-11-16';
 export const HIT_FROM = '2026-11-18';
+// 기준(DONE_RULE)이 PREV_DONE_RULE 에서 바뀐 것이면 RECHECK_FROM 부터의 날만 다시 센다 (그 전 날은 결과가 같아서)
+const PREV_DONE_RULE = 'record-from-2026-11-02-level-from-2026-11-03-score-from-2026-11-16-hit-from-2026-11-18';
+const RECHECK_FROM = '2026-11-19';
 // 기준이 바뀌면 이 값도 바뀐다. 결과 캐시와, 새 기준 날짜의 지난 저장본(dayCache)을 버리고 다시 센다.
-export const DONE_RULE = `record-from-${STRICT_FROM}-level-from-${LEVEL_FROM}-score-from-${SCORE_FROM}-hit-from-${HIT_FROM}`;
+export const DONE_RULE = `record-from-${STRICT_FROM}-level-from-${LEVEL_FROM}-score-from-${SCORE_FROM}-hit-from-${HIT_FROM}-q10-${RECHECK_FROM}`;
 // 통과 계산 방식이 바뀌면 이 값도 바뀐다. 저장해 둔 통과 기록(passCache)을 버리고 반 전체를 다시 읽는다.
-export const PASS_VERSION = 2;
+//   3: B3·B7 한 판 10문제(2026-11-19) 반영, 맞힌 개수에 창 크기(s)를 함께 저장
+export const PASS_VERSION = 3;
 // 판단 보류한 날: 분수 연산 마스터가 바뀐 날(11/17)이라 그날 한 것은 따지지 않는다 (선생님 결정).
 //   그날 기준 화면(11/18 아침)은 안 한 학생 명단을 비우고 '판단 보류'로 보여 주고, 누적에도 세지 않는다.
 //   11/19 아침 화면(11/18 한 것)부터 '오늘 할 것' 레벨 기준으로 판정한다.
@@ -563,10 +579,16 @@ const isLevelRule = (day) => day >= LEVEL_FROM;
 const isScoreRule = (day) => day >= SCORE_FROM;
 const isHitRule = (day) => day >= HIT_FROM;
 
-/** day 전에 그 레벨을 푼 가장 최근 날의 맞힌 개수 {date, c} (없으면 null) */
-export function lastHit(byDate, day) {
+/**
+ * day 전에 그 레벨을 푼 가장 최근 날의 맞힌 개수 {date, c} (없으면 null).
+ * size 를 주면 같은 창 크기로 잰 날만 본다 (B3·B7 처럼 문제 수가 바뀐 레벨은 바뀐 뒤 처음 푼 날이 '처음')
+ */
+export function lastHit(byDate, day, size = 0) {
   let date = '';
-  for (const d of Object.keys(byDate || {})) if (d < day && d > date) date = d;
+  for (const d of Object.keys(byDate || {})) {
+    if (size && (byDate[d].s ?? size) !== size) continue;
+    if (d < day && d > date) date = d;
+  }
   return date ? { date, c: byDate[date].c } : null;
 }
 
@@ -591,7 +613,7 @@ function judgeHitDay(day, rows, passes, hits, basicStart) {
     const seq = onNeed.map((r) => (typeof r.seq === 'string' && SEQ_RE.test(r.seq) ? r.seq : '')).join('');
     const { size } = passWindow(need);
     const c = bestWindow(seq, size);
-    const prev = lastHit(hits[no]?.[need], day);
+    const prev = lastHit(hits[no]?.[need], day, size);
     if (prev ? c > prev.c : seq.length >= size) done.add(no);
     else notBeat.set(no, { level: need, hits: c, solved: seq.length, size, prev: prev ? prev.c : null, prevDate: prev ? prev.date : '' });
   }
@@ -768,7 +790,8 @@ export async function buildReport({
   const doneByDay = new Map([[prev, done]]);
   const known = dayCache ? await dayCache.load(client.code) : {};
   if (known.rule !== DONE_RULE) { // 예전 기준으로 저장한 새 기준 날짜는 버리고 다시 센다
-    for (const d of Object.keys(known)) if (isStrict(d)) delete known[d];
+    const from = known.rule === PREV_DONE_RULE ? RECHECK_FROM : STRICT_FROM;
+    for (const d of Object.keys(known)) if (d >= from) delete known[d];
   }
   const todo = days.filter((d) => d !== prev && !doneByDay.has(d));
   const fromCache = todo.filter((d) => Array.isArray(known[d]));
