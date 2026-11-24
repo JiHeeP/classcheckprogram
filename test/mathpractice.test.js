@@ -65,7 +65,7 @@ test('새 기준 누적: STRICT_FROM 전 날짜는 접속만 해도 한 날, 그
 
 test('새 기준 누적: 예전 기준으로 저장한 새 날짜(11/2)는 버리고 다시 받고, 그 전 날짜는 그대로 씀', async () => {
   const old = Object.fromEntries(NOV_DAYS.slice(0, 3).map((d) => [d, ['1', '2', '4', '5']])); // 예전 기준: 4번 포함
-  let saved = { ...old };
+  let saved = { ...old, settledOn: '2026-11-04' }; // 오늘 다시 세기는 이미 함 → 기준 바뀜만 봄
   const dayCache = { load: async () => ({ ...saved }), save: async (_c, all) => { saved = all; } };
   const fetch = fakeFirestoreFetch(weekDb({}, NOV_DAYS));
   const r = await buildReport({
@@ -424,7 +424,7 @@ test('지난 날짜는 저장해 두고 다시 조회하지 않음', async () =>
   };
   const first = fakeFirestoreFetch(weekDb(MISSES));
   const r1 = await buildReport({ ...baseArgs(), fetchImpl: first, dayCache });
-  assert.deepEqual(Object.keys(saved).filter((k) => k !== 'rule').sort(), DAYS);
+  assert.deepEqual(Object.keys(saved).filter((k) => /^\d{4}-/.test(k)).sort(), DAYS);
   assert.equal(saved.rule, DONE_RULE);
   assert.equal(first.calls.length, 5 + 4 * 2, '반·명단·이전 등교일(기록·접속)·마지막 레벨 + 지난 4일 × 2');
 
