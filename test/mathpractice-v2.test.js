@@ -190,7 +190,7 @@ test('끝에서 끝까지: 11/20 아침 화면 = 11/19 판정 (기초 시작점�
   assert.equal(by['6'].notBeat.prev, 15);
   const up = r.progress.find((s) => s.no === '2');
   assert.deepEqual(up.levelUp, { passed: 'L1', next: 'L2' });
-  assert.equal(saved.v, 3);
+  assert.equal(saved.v, 4);
   assert.deepEqual(saved.hits['1'].B1, { '2026-11-18': { c: 12, n: 15, s: 20 }, '2026-11-19': { c: 13, n: 16, s: 20 } });
   assert.equal(r.counts['1'], 1, '11/18 은 B1 처음인데 15문제라 20문제 못 채움 → 안 함');
 });
@@ -334,7 +334,7 @@ test('B3: 오늘 현황에서 10문제 판 통과를 했음으로 봄', async ()
 
 test('기준이 바뀌면 11/19 부터의 날만 다시 셈 (그 전 저장본은 그대로 씀)', async () => {
   const db = hitDb();
-  let known = { rule: 'record-from-2026-11-02-level-from-2026-11-03-score-from-2026-11-16-hit-from-2026-11-18', '2026-11-18': ['1', '2', '3', '4', '6'], '2026-11-19': [] };
+  let known = { rule: 'record-from-2026-11-02-level-from-2026-11-03-score-from-2026-11-16-hit-from-2026-11-18', '2026-11-18': ['1', '2', '3', '4', '6'], '2026-11-19': [], settledOn: '2026-11-21' }; // 다시 세기는 이미 함 → 기준 바뀜만 봄
   const dayCache = { load: async () => JSON.parse(JSON.stringify(known)), save: async (_c, v) => { known = v; } };
   const fetch = fakeFirestoreFetch(db);
   const rep = await buildReport({ classCode: 'TEST01', now: new Date('2026-11-20T23:30:00Z'), countStart: '2026-11-18', fetchImpl: fetch, dayCache });
@@ -395,4 +395,52 @@ test('11/23 부터 L36 + 기초를 끝낸 학생도 셈 (소수의 곱셈 D1 해
   const t = await buildTodayReport({ classCode: 'TEST01', now: new Date('2026-11-23T03:00:00Z'), fetchImpl: fakeFirestoreFetch(db) });
   assert.deepEqual(t.graduated, []);
   assert.equal(t.trying.find((s) => s.no === '5').need, 'D1');
+});
+
+// ---- 늦게 올라온 기록 (학생 앱 오프라인 보관함: 지난 날짜 기록이 다음 날 8:30 뒤에 올라옴) ----
+
+test('늦게 올라온 기록: 다음 등교일에 그 전 날을 다시 세서 누적에서 빠지고, 통과 기록에도 한 번만 들어감', async () => {
+  const B = (no) => ({ studentNo: no, dateKey: '2026-09-01', mode: 'aborted', seq: ones(9), ts: 1 });
+  const db = {
+    TEST01: {
+      name: '5학년 4반', offDays: [], logs: [],
+      students: [{ no: '1', name: SAMPLE_NAMES[0] }, { no: '2', name: SAMPLE_NAMES[1] }],
+      basicStart: { 1: ALL_BASIC, 2: ALL_BASIC },
+      results: [
+        { ...B('1'), level: 'B9' }, { ...B('1'), level: 'B10' }, { ...B('2'), level: 'B9' }, { ...B('2'), level: 'B10' },
+        { studentNo: '2', dateKey: '2026-11-23', level: 'L1', seq: ones(20), mode: 'aborted', ts: kstMillis('2026-11-23', 10) },
+      ],
+    },
+  };
+  const box = (init = null) => {
+    let v = init;
+    return { load: async () => v && JSON.parse(JSON.stringify(v)), save: async (_c, x) => { v = JSON.parse(JSON.stringify(x)); }, get: () => v };
+  };
+  const passCache = box();
+  const dayCache = box({});
+  const baseCache = box();
+  const args = { classCode: 'TEST01', countStart: '2026-11-23', passCache, dayCache, baseCache };
+
+  const am24 = await buildReport({ ...args, now: new Date('2026-11-23T23:30:00Z'), fetchImpl: fakeFirestoreFetch(db) });
+  assert.deepEqual(am24.missing.map((s) => s.no), ['1'], '8:30 에는 1번 기록이 아직 안 올라옴');
+  assert.equal(am24.counts['1'], 1);
+
+  // 1번의 11/23 기록이 11/24 낮에 올라옴 (L1 20문제 다 맞힘 → 그날 통과)
+  db.TEST01.results.push({ studentNo: '1', dateKey: '2026-11-23', level: 'L1', seq: ones(20), mode: 'aborted', ts: kstMillis('2026-11-23', 11) });
+
+  const fetch25 = fakeFirestoreFetch(db);
+  const am25 = await buildReport({ ...args, now: new Date('2026-11-24T23:30:00Z'), fetchImpl: fetch25 });
+  assert.equal(am25.dateKey, '2026-11-24');
+  assert.equal(am25.counts['1'], 1, '11/23 은 다시 세서 했다 → 11/24 하루만');
+  assert.equal(passCache.get().passes['1'].L1, '2026-11-23', '늦게 온 기록도 통과 기록에 들어감');
+  assert.equal(passCache.get().hits['2'].L1['2026-11-23'].n, 20, '이미 넣은 2번 기록은 다시 읽어도 두 번 넣지 않음');
+  assert.deepEqual(dayCache.get()['2026-11-23'].sort(), ['1', '2']);
+  const dayQueries = (f) => f.calls.filter((c) => c.body.includes('"op":"EQUAL"'))
+    .map((c) => JSON.parse(c.body).structuredQuery.where.fieldFilter.value.stringValue);
+  assert.ok(dayQueries(fetch25).includes('2026-11-23'), '11/23 을 다시 읽음');
+
+  const fetchAgain = fakeFirestoreFetch(db);
+  const again = await buildReport({ ...args, now: new Date('2026-11-25T01:00:00Z'), fetchImpl: fetchAgain, refresh: true });
+  assert.ok(!dayQueries(fetchAgain).includes('2026-11-23'), '같은 날 두 번째부터는 다시 세지 않음');
+  assert.equal(again.counts['1'], 1);
 });

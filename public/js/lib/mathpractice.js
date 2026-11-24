@@ -31,7 +31,8 @@ export function passScore(level) {
 //   값은 도전 문제 수(chalQ). 통과는 '한 판 안'에서만 판정한다 (아래 passWindow)
 export const BASIC_LINES = { sub: ['B1'], mul: ['B2', 'B3', 'B4'], div: ['B5', 'B6', 'B7', 'B8'], fm: ['B9', 'B10'] };
 export const BASIC_ORDER = [...BASIC_LINES.sub, ...BASIC_LINES.mul, ...BASIC_LINES.div, ...BASIC_LINES.fm];
-//   B3·B7 은 2026-11-19 에 20문제 → 10문제로 줄었다 (mathpractice levels.js). 그 전의 20문제 판은 그때 규칙(20문제 중 18개)으로 본다
+//   B3 은 2026-11-19, B7 은 2026-11-20 에 20문제 → 10문제로 줄었다 (mathpractice levels.js). 그 전의 20문제 판은 그때 규칙(20문제 중 18개)으로 본다
+//   (날짜가 아니라 판의 문제 수로 구분한다 — isOldRun)
 const BASIC_CHAL_Q = { B1: 20, B2: 20, B3: 10, B4: 10, B5: 20, B6: 20, B7: 10, B8: 10, B9: 10, B10: 10 };
 // 소수의 곱셈 D1~D6 · 도형의 넓이 A1~A6 (mathpractice 2026-11-18~20 추가). 분수·소수처럼 앞 레벨을 통과해야 열리고,
 //   통과도 분수·소수와 같은 '이어 붙이는 창'. WAS_Q: 20문제였다가 10문제로 줄인 레벨(2026-11-19) — 예전 20문제 판은 20문제 중 18개
@@ -211,7 +212,14 @@ const PREV_DONE_RULE_2 = `${PREV_DONE_RULE}-q10-${RECHECK_FROM}`; // B3·B7 10�
 export const DONE_RULE = `record-from-${STRICT_FROM}-level-from-${LEVEL_FROM}-score-from-${SCORE_FROM}-hit-from-${HIT_FROM}-q10-${RECHECK_FROM}-tracks-${TRACKS_FROM}`;
 // 통과 계산 방식이 바뀌면 이 값도 바뀐다. 저장해 둔 통과 기록(passCache)을 버리고 반 전체를 다시 읽는다.
 //   3: B3·B7 한 판 10문제(2026-11-19) 반영, 맞힌 개수에 창 크기(s)를 함께 저장
-export const PASS_VERSION = 3;
+//   4: 늦게 올라온 기록도 넣기 — 최근 PASS_OVERLAP_DAYS 일을 다시 읽고 이미 넣은 기록(seen)은 건너뜀
+export const PASS_VERSION = 4;
+// 학생 앱은 인터넷이 끊기면 기록을 기기에 모아 두었다가 나중에 올린다(오프라인 보관함). 그래서 지난 날짜 기록이
+// 다음 날 아침 8:30 뒤에 올라오기도 한다(11/23 기록 5건이 11/24 08:33~12:34 에 올라옴).
+//   통과 기록: 최근 이만큼의 날은 다시 읽고, 이미 넣은 기록은 문서 id 로 걸러서 새로 온 것만 더한다
+export const PASS_OVERLAP_DAYS = 7;
+//   누적: 이전 등교일 앞의 이만큼의 등교일은 하루 한 번 다시 센다 (그 뒤로는 저장본 그대로)
+export const SETTLE_DAYS = 3;
 // 판단 보류한 날: 분수 연산 마스터가 바뀐 날(11/17)이라 그날 한 것은 따지지 않는다 (선생님 결정).
 //   그날 기준 화면(11/18 아침)은 안 한 학생 명단을 비우고 '판단 보류'로 보여 주고, 누적에도 세지 않는다.
 //   11/19 아침 화면(11/18 한 것)부터 '오늘 할 것' 레벨 기준으로 판정한다.
@@ -344,11 +352,11 @@ export function sortByNo(list) {
   });
 }
 
-/** Firestore 기록 → {no, dateKey, level, mode, score, totalQuestions} (번호 없으면 null) */
-function resultRow(f) {
+/** Firestore 기록 → {id, no, dateKey, level, mode, score, totalQuestions} (번호 없으면 null). id 는 문서 이름 끝 */
+function resultRow(f, name = '') {
   if (f.studentNo == null) return null;
   return {
-    no: String(f.studentNo), dateKey: String(f.dateKey || ''), level: String(f.level || ''), mode: String(f.mode || ''),
+    id: String(name).split('/').pop(), no: String(f.studentNo), dateKey: String(f.dateKey || ''), level: String(f.level || ''), mode: String(f.mode || ''),
     score: f.score ?? null, totalQuestions: typeof f.totalQuestions === 'number' ? f.totalQuestions : null,
     ts: typeof f.ts === 'number' ? f.ts : 0, seq: typeof f.seq === 'string' ? f.seq : null,
   };
@@ -499,14 +507,14 @@ export class MathPracticeClient {
         value: { arrayValue: { values: [{ stringValue: 'challenge' }, { stringValue: 'aborted' }] } },
       },
     });
-    return docs.map((d) => resultRow(fields(d))).filter(Boolean);
+    return docs.map((d) => resultRow(fields(d), d.name)).filter(Boolean);
   }
 
   /** dateKey 가 since 보다 뒤인 모든 기록(연습·도전) [{no, dateKey, level, mode, score, totalQuestions}] */
   async fetchResultsSince(since) {
     const docs = await this.queryAll(
       { fieldFilter: { field: { fieldPath: 'dateKey' }, op: 'GREATER_THAN', value: { stringValue: since } } }, 'dateKey');
-    return docs.map((d) => resultRow(fields(d))).filter(Boolean);
+    return docs.map((d) => resultRow(fields(d), d.name)).filter(Boolean);
   }
 
   /**
@@ -543,7 +551,7 @@ export class MathPracticeClient {
       },
     };
     const rows = await this.call(`classes/${encodeURIComponent(this.code)}:runQuery`, { body });
-    return (rows || []).filter((row) => row.document).map((row) => resultRow(fields(row.document))).filter(Boolean);
+    return (rows || []).filter((row) => row.document).map((row) => resultRow(fields(row.document), row.document.name)).filter(Boolean);
   }
 }
 
@@ -586,22 +594,29 @@ const isObj = (x) => Boolean(x) && typeof x === 'object';
  */
 async function loadPasses(client, passCache, today) {
   const saved = passCache ? await passCache.load(client.code).catch(() => null) : null;
-  let passes, best, windows, hits, rows;
+  let passes, best, windows, hits, seen, rows;
   // 통과 규칙이 바뀌기 전 저장본(PASS_VERSION 이 다름)은 버리고 반 전체를 다시 읽는다
   if (saved && saved.v === PASS_VERSION && typeof saved.through === 'string'
-    && isObj(saved.passes) && isObj(saved.best) && isObj(saved.windows) && isObj(saved.hits)) {
-    ({ passes, best, windows, hits } = saved);
-    rows = await client.fetchResultsSince(saved.through);
+    && isObj(saved.passes) && isObj(saved.best) && isObj(saved.windows) && isObj(saved.hits) && isObj(saved.seen)) {
+    ({ passes, best, windows, hits, seen } = saved);
+    // 최근 며칠은 다시 읽는다: 늦게 올라온 지난 날짜 기록(오프라인 보관함)도 넣으려고. 이미 넣은 기록(seen)은 건너뛴다
+    //   (같은 기록을 두 번 넣으면 이어 붙이는 창이 틀어진다). 늦게 온 기록은 창 끝에 붙는다
+    rows = (await client.fetchResultsSince(addDays(saved.through, -PASS_OVERLAP_DAYS))).filter((r) => !seen[r.id]);
   } else {
-    passes = {}; best = {}; windows = {}; hits = {};
+    passes = {}; best = {}; windows = {}; hits = {}; seen = {};
     rows = await client.fetchChallengeHistory();
   }
   // 오늘 기록은 넣지 않는다: 이어 붙이는 창이 다음에 오늘 것을 또 넣으면 틀어진다 (판정은 어제까지만 씀)
   rows = rows.filter((r) => r.dateKey && r.dateKey < today);
   addProgress(passes, windows, rows, hits);
   addBest(best, rows);
+  // 넣은 기록 id — 다음에 다시 읽는 날(through 앞 PASS_OVERLAP_DAYS 일 뒤)의 것만 남긴다
+  const through = addDays(today, -1);
+  const keepAfter = addDays(through, -PASS_OVERLAP_DAYS);
+  for (const r of rows) if (r.id) seen[r.id] = r.dateKey;
+  for (const [id, d] of Object.entries(seen)) if (!(d > keepAfter)) delete seen[id];
   if (passCache) {
-    await passCache.save(client.code, { v: PASS_VERSION, through: addDays(today, -1), passes, best, windows, hits }).catch(() => {});
+    await passCache.save(client.code, { v: PASS_VERSION, through, passes, best, windows, hits, seen }).catch(() => {});
   }
   return { passes, best, hits, windows };
 }
@@ -830,8 +845,11 @@ export async function buildReport({
   const known = dayCache ? await dayCache.load(client.code) : {};
   if (known.rule !== DONE_RULE) { // 예전 기준으로 저장한 새 기준 날짜는 버리고 다시 센다
     const from = known.rule === PREV_DONE_RULE_2 ? TRACKS_FROM : known.rule === PREV_DONE_RULE ? RECHECK_FROM : STRICT_FROM;
-    for (const d of Object.keys(known)) if (d >= from) delete known[d];
+    for (const d of Object.keys(known)) if (/^\d{4}-/.test(d) && d >= from) delete known[d]; // 날짜 칸만
   }
+  // 늦게 올라온 기록(오프라인 보관함)을 반영하려고, 이전 등교일 앞 SETTLE_DAYS 등교일은 하루 한 번 다시 센다
+  const settle = known.settledOn === today ? [] : days.filter((d) => d < prev).slice(-SETTLE_DAYS);
+  for (const d of settle) delete known[d];
   const todo = days.filter((d) => d !== prev && !doneByDay.has(d));
   const fromCache = todo.filter((d) => Array.isArray(known[d]));
   for (const d of fromCache) doneByDay.set(d, new Set(known[d]));
@@ -845,8 +863,11 @@ export async function buildReport({
       fresh[d] = [...set];
     }));
   }
-  if (!Array.isArray(known[prev]) && days.includes(prev)) fresh[prev] = [...done]; // 이전 등교일은 이미 끝난 날
-  if (dayCache && Object.keys(fresh).length) await dayCache.save(client.code, { ...known, ...fresh, rule: DONE_RULE });
+  // 이전 등교일은 이미 끝난 날. 늦게 올라온 기록이 있을 수 있어서 다음 등교일부터 SETTLE_DAYS 동안 다시 센다
+  if (days.includes(prev)) fresh[prev] = [...done];
+  if (dayCache && (Object.keys(fresh).length || settle.length)) {
+    await dayCache.save(client.code, { ...known, ...fresh, rule: DONE_RULE, settledOn: today });
+  }
 
   const counts = {};
   for (const s of counted) {
