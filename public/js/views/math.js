@@ -62,20 +62,17 @@ function schedule(ctx) {
 const shortDate = (key) => `${Number(key.slice(5, 7))}/${Number(key.slice(8, 10))}`;
 
 /**
- * 어제보다 상승하지 못한 까닭 글
- *   맞힌 개수(11/18~): "B1 15개 · 11/18 15개 못 넘음" / "L10 처음 · 12문제 (20문제 채워야)"
- *   점수(11/16~17): "L21 연습만 · 도전해야" / "L21 180점 · 11/12 185점 못 넘음"
+ * 지난번보다 늘지 못한 까닭 글 — 분수 연산 마스터 학생 화면의 '오늘 목표'와 같은 말 (2026-11-25 선생님 결정)
+ *   "B1 15개 · 지난번(11/18) 15개 못 넘음" / "L10 처음 · 1판 풀어야"
+ *   (예전 점수 기준 날의 글은 지웠다 — 지금 화면에는 맞힌 개수 기준 날만 나온다)
  */
 function notBeatText(b) {
-  if ('hits' in b) {
-    if (b.prev == null) return `${b.level} 처음 · ${b.solved}문제 (${b.size}문제 채워야)`;
-    return `${b.level} ${b.hits}개 · ${b.prevDate ? shortDate(b.prevDate) : '전날'} ${b.prev}개 못 넘음`;
-  }
-  if (b.score == null) return `${b.level} 연습만 · 도전해야`;
-  return `${b.level} ${b.score}점 · ${b.prevDate ? shortDate(b.prevDate) : '전날'} ${b.prev}점 못 넘음`;
+  if (!('hits' in b)) return `${b.level} 못 넘음`;
+  if (b.prev == null) return `${b.level} 처음 · 1판 ${b.solved ? '더 ' : ''}풀어야`;
+  return `${b.level} ${b.hits}개 · 지난번${b.prevDate ? `(${shortDate(b.prevDate)})` : ''} ${b.prev}개 못 넘음`;
 }
 
-/** 안 한 까닭: 접속만 / 다른(낮은) 레벨만 풂 / 전날보다 못 늘림(점수·맞힌 개수) */
+/** 안 한 까닭: 접속만 / 다른 레벨만 풂 / 지난번보다 못 늘림 */
 function missReason(s) {
   if (s.accessOnly) return el('small.miss-reason', '접속만');
   if (s.lower) return el('small.miss-reason', `${s.lower.did} 함 · ${s.lower.need} 해야`);
@@ -198,7 +195,7 @@ function todaySection(ctx) {
   const trying = group('trying', '하는 중 (아직 못 넘음)', t.trying, (s) => el('span.today-chip', ...who(s),
     el('small.miss-reason', s.lower ? `${s.lower.did} 함 · ${s.lower.need} 해야` : s.notBeat ? notBeatText(s.notBeat) : `${s.solved}문제`)));
   const done = group('done', '했음', t.done, (s) => el('span.today-chip', ...who(s),
-    s.levelUp ? el('small.miss-reason', s.levelUp.next ? `⬆ ${s.levelUp.passed}→${s.levelUp.next}` : `⬆ ${s.levelUp.passed} 통과`) : null));
+    s.levelUp ? el('small.miss-reason', `⬆ ${s.levelUp.passed} 통과`) : null));
   const skipped = [
     t.absent.length ? `오늘 결석 ${t.absent.length}명: ${t.absent.map((s) => s.name).join(', ')}` : '',
     t.graduated.length ? `모든 레벨 통과 ${t.graduated.length}명` : '',
@@ -209,32 +206,27 @@ function todaySection(ctx) {
       + `${t.levelUps ? ` · ⬆ 레벨 상승 ${t.levelUps}명` : ''} · ${t.fetchedAt} 조회`),
     notYet, trying, done,
     skipped.length ? el('p.muted.small', `세지 않음 — ${skipped.join(' · ')}`) : null,
-    el('p.muted.small', `이전 등교일과 같은 기준(오늘 할 것 레벨을 통과하거나 맞힌 개수가 전날보다 늘기)으로 지금까지 푼 것만 봐요. 하루가 끝나지 않아서 바뀔 수 있어요. 오늘 기록 ${t.records}건을 읽었어요.`));
+    el('p.muted.small', `이전 등교일과 같은 기준(오늘 할 것 레벨을 통과하거나 맞힌 개수가 지난번보다 늘기)으로 지금까지 푼 것만 봐요. 하루가 끝나지 않아서 바뀔 수 있어요. 오늘 기록 ${t.records}건을 읽었어요.`));
 }
 
-/** 이전 등교일에 한 학생의 레벨 상승·점수 */
+/** 이전 등교일에 한 학생의 레벨 상승 · 했음/안 함 까닭 (점수는 보이지 않는다 — 판정이 맞힌 개수라서) */
 function progressSection(r) {
   if (!r.progress?.length) return null;
-  const scoreText = (s) => {
-    const parts = s.scores.map((x) => `${x.level} ${x.score}점`);
-    if (s.practice.length) parts.push(`${s.practice.join('·')} 풂(점수 없음)`);
-    if (s.need) parts.push(`${s.need} 안 함`);
-    if (s.notBeat) {
-      parts.push('hits' in s.notBeat ? notBeatText(s.notBeat)
-        : s.notBeat.score == null ? `${s.notBeat.level} 도전 안 함` : `${s.notBeat.prevDate ? shortDate(s.notBeat.prevDate) : '전날'} ${s.notBeat.prev}점 못 넘음`);
-    }
-    return parts.length ? parts.join(' · ') : '기록 없음';
+  const missed = new Set((r.missing || []).map((s) => s.no));
+  const stateText = (s) => {
+    if (s.need) return `${s.need} 안 함`;
+    if (s.notBeat) return notBeatText(s.notBeat);
+    return missed.has(s.no) ? '안 함' : '했음';
   };
   return el('section.progress',
-    el('h2.progress-title', `${r.dateLabel} 레벨·점수`,
+    el('h2.progress-title', `${r.dateLabel} 레벨`,
       el('small', r.levelUps ? ` · 레벨 상승 ${r.levelUps}명` : ' · 레벨 상승 없음')),
     el('ul.progress-list', r.progress.map((s) => el(s.levelUp ? 'li.progress-row.up' : 'li.progress-row',
       el('span.progress-who', el('small', `${s.no}번`), s.name),
       s.levelUp
-        ? el('span.progress-up', s.levelUp.next ? `⬆ ${s.levelUp.passed} 통과 → ${s.levelUp.next}` : `🏁 ${s.levelUp.passed} 통과 (마지막)`)
-        : null,
-      el('span.progress-score', scoreText(s))))),
-    el('p.muted.small', '점수는 끝까지 푼 판에서 레벨마다 가장 높은 점수(통과한 판은 점수 없이 끝남). 레벨 상승은 그날 처음 통과한 것(최근 20문제 중 18개, 기초는 한 판에서 18개 · 10문제 레벨은 9개). "L○ 안 함"은 오늘 할 것 레벨을 안 풀어서, "못 넘음"은 그 레벨에서 연속 20문제(10문제 레벨은 10문제) 중 맞힌 개수가 전날보다 늘지 않아서 안 한 것으로 센 학생.'));
+        ? el('span.progress-up', `⬆ ${s.levelUp.passed} 통과`)
+        : el('span.progress-score', stateText(s))))),
+    el('p.muted.small', '레벨 상승은 그날 처음 통과한 레벨. "○ 안 함"은 오늘 할 것 레벨을 안 풀어서, "못 넘음"은 그 레벨에서 맞힌 개수가 지난번보다 늘지 않아서 안 한 것으로 센 학생.'));
 }
 
 export function render(root, ctx, { changedTab } = {}) {
@@ -291,11 +283,10 @@ export function render(root, ctx, { changedTab } = {}) {
 
   const notes = [
     `${r.total}명 중 ${r.done}명 함${r.absent?.length ? ` (결석 ${r.absent.length}명 뺌)` : ''}`,
-    [r.hitRule ? '오늘 할 것 레벨을 통과하거나 맞힌 개수가 전날보다 늘어야 함'
-      : r.scoreRule ? '자기 최고 레벨 도전에서 전날 점수를 넘어야 함' : r.levelRule ? '자기 최고 레벨을 풀어야 함' : '연습·도전을 풀어야 함',
+    ['오늘 할 것 레벨을 통과하거나 맞힌 개수가 지난번보다 늘어야 함',
       r.accessOnly ? `접속만 ${r.accessOnly}명` : '',
-      r.lowerLevel ? `${r.hitRule ? '다른 레벨만' : '낮은 레벨만'} ${r.lowerLevel}명` : '',
-      r.notBeatCount ? `${r.hitRule ? '전날보다 못 늘림' : '전날 점수 못 넘음'} ${r.notBeatCount}명` : ''].filter(Boolean).join(' · ')
+      r.lowerLevel ? `다른 레벨만 ${r.lowerLevel}명` : '',
+      r.notBeatCount ? `지난번보다 못 늘림 ${r.notBeatCount}명` : ''].filter(Boolean).join(' · ')
       + (r.accessOnly || r.lowerLevel || r.notBeatCount ? ' 포함' : ''),
     popup || !r.missing.length ? '' : '이름을 누르면 결석 처리',
     `${r.fetchedDate && r.fetchedDate !== todayKST() ? `${r.fetchedDate.slice(5).replace('-', '/')} ` : ''}${r.fetchedAt} 확인`,
@@ -313,8 +304,7 @@ export function render(root, ctx, { changedTab } = {}) {
   const ups = (r.progress || []).filter((s) => s.levelUp);
   const upNote = ups.length
     ? el('p.math-notes.levelup-note', `⬆ 레벨 상승 ${ups.length}명 — ${ups.map((s) => {
-      const score = s.scores.find((x) => x.level === s.levelUp.passed)?.score;
-      return `${s.no}번 ${s.name} ${s.levelUp.passed}→${s.levelUp.next || '완료'}${score != null ? `(${score}점)` : ''}`;
+      return `${s.no}번 ${s.name} ${s.levelUp.passed} 통과`;
     }).join(' · ')}`)
     : null;
   const watchNote = r.watch?.length
