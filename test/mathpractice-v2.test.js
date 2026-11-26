@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildReport, buildTodayReport, addProgress, passWindow, bestWindow, todayLevel, judgeDay, parseBasicStart, nextLevel, lastHit,
-  HIT_FROM, DONE_RULE, TRACKS_FROM,
+  HIT_FROM, DONE_RULE, TRACKS_FROM, PASS_VERSION, RECENT_DAYS, settleDay,
 } from '../public/js/lib/mathpractice.js';
 import { fakeFirestoreFetch, SAMPLE_NAMES, kstMillis } from './fake-firestore.js';
 
@@ -190,8 +190,9 @@ test('끝에서 끝까지: 11/20 아침 화면 = 11/19 판정 (기초 시작점�
   assert.equal(by['6'].notBeat.prev, 15);
   const up = r.progress.find((s) => s.no === '2');
   assert.deepEqual(up.levelUp, { passed: 'L1', next: 'L2' });
-  assert.equal(saved.v, 3);
-  assert.deepEqual(saved.hits['1'].B1, { '2026-11-18': { c: 12, n: 15, s: 20 }, '2026-11-19': { c: 13, n: 16, s: 20 } });
+  assert.equal(saved.v, PASS_VERSION);
+  assert.equal(saved.through, '2026-11-17', '최근 날짜(11/18~)는 굳히지 않음 — 늦게 올라오는 기록');
+  assert.equal(saved.hits['1'], undefined, '맞힌 개수도 최근 날짜는 저장본에 안 넣고 매번 다시 셈');
   assert.equal(r.counts['1'], 1, '11/18 은 B1 처음인데 15문제라 20문제 못 채움 → 안 함');
 });
 
@@ -203,15 +204,21 @@ test('저장본에 오늘 기록은 넣지 않고, 다음 날 새 날짜만 더�
     { studentNo: '2', dateKey: '2026-11-20', level: 'L2', seq: ones(10), mode: 'aborted', score: null, ts: kstMillis('2026-11-20', 10) },
   );
   await buildReport({ classCode: 'TEST01', now: new Date('2026-11-20T01:00:00Z'), fetchImpl: fakeFirestoreFetch(db), passCache });
-  assert.equal(saved.through, '2026-11-19');
+  assert.equal(saved.through, '2026-11-17');
   assert.equal(saved.windows['2']?.L2, undefined, '오늘(11/20) 기록은 아직 안 넣음');
   db.TEST01.results.push(
     { studentNo: '2', dateKey: '2026-11-23', level: 'L2', seq: ones(8), mode: 'aborted', score: null, ts: kstMillis('2026-11-23', 10) },
   );
   const r = await buildReport({ classCode: 'TEST01', now: new Date('2026-11-23T23:30:00Z'), fetchImpl: fakeFirestoreFetch(db), passCache });
-  assert.equal(saved.passes['2'].L2, '2026-11-23', '11/20 의 10개 + 11/23 의 8개 = 18/18, 두 번 넣지 않음');
-  assert.equal(saved.windows['2'].L2, ones(18));
+  assert.equal(saved.windows['2']?.L2, undefined, '11/20·11/23 은 아직 최근 날짜라 저장본에 안 넣음');
+  const up = r.progress.find((s) => s.no === '2');
+  assert.deepEqual(up.levelUp, { passed: 'L2', next: 'L3' }, '11/20 의 10개 + 11/23 의 8개 = 18/18, 두 번 넣지 않음');
   assert.ok(!r.missing.some((s) => s.no === '2'));
+  // 8일 넘게 지나 굳힌 뒤에도 창이 그대로 이어짐
+  await buildReport({ classCode: 'TEST01', now: new Date('2026-12-01T23:30:00Z'), fetchImpl: fakeFirestoreFetch(db), passCache });
+  assert.equal(saved.through, '2026-11-24');
+  assert.equal(saved.passes['2'].L2, '2026-11-23');
+  assert.equal(saved.windows['2'].L2, ones(18));
 });
 
 test('판단 보류: 11/17 한 것은 따지지 않음 (11/18 아침 화면은 명단 비움, 누적에서도 뺌)', async () => {
@@ -251,8 +258,8 @@ test('오늘 현황: 오늘 기록만 새로 읽고 했음 / 하는 중 / 아직
   const t = await buildTodayReport({
     classCode: 'TEST01', now, fetchImpl: fetch, baseCache, passCache, absent: { '2026-11-20_4': true },
   });
-  assert.equal(fetch.calls.length, 1, '받아 둔 것이 있으면 오늘 기록만 한 번 읽음');
-  assert.match(decodeURIComponent(fetch.calls[0].body), /2026-11-20/);
+  assert.equal(fetch.calls.length, 1, '받아 둔 것이 있으면 굳힌 날(11/17) 다음부터 오늘까지 한 번만 읽음 (늦게 올라온 기록 포함)');
+  assert.match(decodeURIComponent(fetch.calls[0].body), /"GREATER_THAN","value":\{"stringValue":"2026-11-17"\}/);
   assert.equal(t.dateKey, today);
   assert.deepEqual(t.done.map((s) => s.no), ['1', '6']);
   assert.deepEqual(t.done.find((s) => s.no === '6').levelUp, { passed: 'B1', next: '' });
@@ -337,13 +344,67 @@ test('기준이 바뀌면 11/19 부터의 날만 다시 셈 (그 전 저장본�
   let known = { rule: 'record-from-2026-11-02-level-from-2026-11-03-score-from-2026-11-16-hit-from-2026-11-18', '2026-11-18': ['1', '2', '3', '4', '6'], '2026-11-19': [] };
   const dayCache = { load: async () => JSON.parse(JSON.stringify(known)), save: async (_c, v) => { known = v; } };
   const fetch = fakeFirestoreFetch(db);
-  const rep = await buildReport({ classCode: 'TEST01', now: new Date('2026-11-20T23:30:00Z'), countStart: '2026-11-18', fetchImpl: fetch, dayCache });
-  assert.equal(rep.dateKey, '2026-11-20');
+  // 최근 7일은 어차피 다시 세므로, 11/18 이 최근 날짜가 아닌 때(11/28 토)로 본다
+  const rep = await buildReport({ classCode: 'TEST01', now: new Date('2026-11-27T23:30:00Z'), countStart: '2026-11-18', fetchImpl: fetch, dayCache });
+  assert.equal(rep.dateKey, '2026-11-27');
   assert.equal(known.rule, DONE_RULE);
   assert.deepEqual(known['2026-11-18'], ['1', '2', '3', '4', '6'], '11/18 은 다시 세지 않음');
   assert.ok(known['2026-11-19'].includes('1'), '11/19 는 다시 셈 (1번 했다)');
   const dayQueries = fetch.calls.filter((c) => c.body.includes('"op":"EQUAL"')).map((c) => JSON.parse(c.body).structuredQuery.where.fieldFilter.value.stringValue);
   assert.ok(!dayQueries.includes('2026-11-18') && dayQueries.includes('2026-11-19'));
+});
+
+// ---- 늦게 올라온 기록 (학생 기기에 남아 있다가 다음 날 이후 올라옴, 2026-11-26) ----
+
+const cacheOf = () => {
+  let v = null;
+  return { load: async () => v && JSON.parse(JSON.stringify(v)), save: async (_c, x) => { v = JSON.parse(JSON.stringify(x)); }, get: () => v };
+};
+
+test('늦게 올라온 기록: 아침에 사이트를 연 뒤 올라온 어제 기록도 오늘 현황 통과에 이어 붙임', async () => {
+  const db = hitDb();
+  const lateRow = (dateKey, seq, hour) => ({
+    studentNo: '2', dateKey, level: 'L2', seq, mode: 'aborted', score: null, totalQuestions: seq.length, ts: kstMillis(dateKey, hour),
+  });
+  db.TEST01.results.push(lateRow('2026-11-20', ones(10), 10));
+  const baseCache = cacheOf();
+  const passCache = cacheOf();
+  // 11/23(월) 08:30 아침 화면
+  await buildReport({ classCode: 'TEST01', now: new Date('2026-11-22T23:30:00Z'), fetchImpl: fakeFirestoreFetch(db), baseCache, passCache });
+  // 그 뒤에 11/20 마지막 판(5문제)이 늦게 올라오고, 11/23 에 3문제 더 맞힘 → 10 + 5 + 3 = 18/18 통과
+  db.TEST01.results.push(lateRow('2026-11-20', ones(5), 11), lateRow('2026-11-23', ones(3), 9));
+  const t = await buildTodayReport({ classCode: 'TEST01', now: new Date('2026-11-23T03:00:00Z'), fetchImpl: fakeFirestoreFetch(db), baseCache, passCache });
+  const two = t.done.find((s) => s.no === '2');
+  assert.ok(two, '분수 연산 마스터처럼 통과');
+  assert.deepEqual(two.levelUp, { passed: 'L2', next: 'L3' });
+});
+
+test('늦게 올라온 기록: 지난 날의 했다·안 함도 최근 7일 안이면 다시 셈 (누적 바로잡음)', async () => {
+  const db = hitDb();
+  const day = cacheOf();
+  const dayCache = { ...day, load: async () => (await day.load()) || {} }; // 저장본이 없으면 {} (store.js 와 같음)
+  const passCache = cacheOf();
+  const args = { classCode: 'TEST01', countStart: '2026-11-18', dayCache, passCache };
+  // 11/21(토) 아침: 11/20 에 3번은 기록이 없음 → 안 함
+  const r1 = await buildReport({ ...args, now: new Date('2026-11-20T23:30:00Z'), fetchImpl: fakeFirestoreFetch(db) });
+  assert.ok(r1.missing.some((s) => s.no === '3'));
+  assert.ok(!dayCache.get()['2026-11-20'].includes('3'));
+  // 11/20 에 3번이 B1 한 판 18개로 통과한 기록이 11/23 에야 올라옴
+  db.TEST01.results.push({
+    studentNo: '3', dateKey: '2026-11-20', level: 'B1', seq: `${ones(18)}00`, mode: 'challenge', score: 90, totalQuestions: 20, ts: kstMillis('2026-11-20', 13),
+  });
+  const r2 = await buildReport({ ...args, now: new Date('2026-11-23T23:30:00Z'), fetchImpl: fakeFirestoreFetch(db) });
+  assert.ok(dayCache.get()['2026-11-20'].includes('3'), '11/20 은 다시 세어 했다');
+  assert.equal(dayCache.get().checkedOn, '2026-11-24');
+  assert.equal(r2.counts['3'], r1.counts['3'], '11/20 은 누적에서 빠지고 11/23(기록 없음)이 더해짐');
+});
+
+test('굳히는 날: 최근 7일 전까지 (11/18 전 날짜는 예전처럼 어제까지)', () => {
+  assert.equal(RECENT_DAYS, 7);
+  assert.equal(settleDay('2026-11-10'), '2026-11-09');
+  assert.equal(settleDay('2026-11-20'), '2026-11-17');
+  assert.equal(settleDay('2026-11-26'), '2026-11-18');
+  assert.equal(settleDay('2026-12-10'), '2026-12-02');
 });
 
 // ---- 소수의 곱셈 · 도형의 넓이 트랙까지 세기 (11/23 부터) ----

@@ -424,7 +424,7 @@ test('지난 날짜는 저장해 두고 다시 조회하지 않음', async () =>
   };
   const first = fakeFirestoreFetch(weekDb(MISSES));
   const r1 = await buildReport({ ...baseArgs(), fetchImpl: first, dayCache });
-  assert.deepEqual(Object.keys(saved).filter((k) => k !== 'rule').sort(), DAYS);
+  assert.deepEqual(Object.keys(saved).filter((k) => k !== 'rule' && k !== 'checkedOn').sort(), DAYS);
   assert.equal(saved.rule, DONE_RULE);
   assert.equal(first.calls.length, 5 + 4 * 2, '반·명단·이전 등교일(기록·접속)·마지막 레벨 + 지난 4일 × 2');
 

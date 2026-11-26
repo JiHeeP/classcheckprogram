@@ -207,11 +207,30 @@ export const TRACKS_FROM = '2026-11-23';
 const PREV_DONE_RULE = 'record-from-2026-11-02-level-from-2026-11-03-score-from-2026-11-16-hit-from-2026-11-18';
 const RECHECK_FROM = '2026-11-19';
 const PREV_DONE_RULE_2 = `${PREV_DONE_RULE}-q10-${RECHECK_FROM}`; // B3·B7 10문제 반영 뒤 (트랙 추가 전)
+const PREV_DONE_RULE_3 = `${PREV_DONE_RULE_2}-tracks-${TRACKS_FROM}`; // 트랙 추가 뒤 (늦게 올라온 기록 반영 전)
+// 늦게 올라온 기록 반영(2026-11-26): 그 전 저장본은 늦게 올라온 기록을 빠뜨렸을 수 있어 HIT_FROM 부터 다시 센다
+const LATE_FROM = HIT_FROM;
 // 기준이 바뀌면 이 값도 바뀐다. 결과 캐시와, 새 기준 날짜의 지난 저장본(dayCache)을 버리고 다시 센다.
-export const DONE_RULE = `record-from-${STRICT_FROM}-level-from-${LEVEL_FROM}-score-from-${SCORE_FROM}-hit-from-${HIT_FROM}-q10-${RECHECK_FROM}-tracks-${TRACKS_FROM}`;
+export const DONE_RULE = `${PREV_DONE_RULE_3}-late-${LATE_FROM}`;
 // 통과 계산 방식이 바뀌면 이 값도 바뀐다. 저장해 둔 통과 기록(passCache)을 버리고 반 전체를 다시 읽는다.
 //   3: B3·B7 한 판 10문제(2026-11-19) 반영, 맞힌 개수에 창 크기(s)를 함께 저장
-export const PASS_VERSION = 3;
+//   4: 저장본은 RECENT_DAYS 일 전까지만 굳히고, 그 뒤 날짜는 열 때마다 다시 읽는다 (늦게 올라온 기록, 2026-11-26)
+export const PASS_VERSION = 4;
+// 학생 기기에 남아 있다가 며칠 뒤에 올라오는 기록이 있다 (기기 보관함 — 인터넷이 끊겼거나 창을 닫았을 때).
+//   2026-11-26 까지 10건, 가장 늦은 것은 5일 뒤. 그래서 최근 RECENT_DAYS 일(달력 날짜)은 굳히지 않고 열 때마다
+//   다시 읽어 센다. 이보다 더 늦게 올라온 기록은 사이트가 못 센다 (분수 연산 마스터 화면에는 들어감)
+export const RECENT_DAYS = 7;
+/**
+ * 저장본에 굳히는 마지막 날: RECENT_DAYS 일 전 (어제보다 뒤일 수 없음).
+ * LATE_FROM 전 날짜는 예전처럼 어제까지 굳힌다 (그때 기준으로 이미 센 날이라 다시 세지 않음)
+ */
+export function settleDay(today) {
+  const yesterday = addDays(today, -1);
+  const floor = addDays(LATE_FROM, -1);
+  const d = addDays(today, -(RECENT_DAYS + 1));
+  const settle = d > floor ? d : floor;
+  return settle < yesterday ? settle : yesterday;
+}
 // 판단 보류한 날: 분수 연산 마스터가 바뀐 날(11/17)이라 그날 한 것은 따지지 않는다 (선생님 결정).
 //   그날 기준 화면(11/18 아침)은 안 한 학생 명단을 비우고 '판단 보류'로 보여 주고, 누적에도 세지 않는다.
 //   11/19 아침 화면(11/18 한 것)부터 '오늘 할 것' 레벨 기준으로 판정한다.
@@ -586,24 +605,39 @@ const isObj = (x) => Boolean(x) && typeof x === 'object';
  */
 async function loadPasses(client, passCache, today) {
   const saved = passCache ? await passCache.load(client.code).catch(() => null) : null;
-  let passes, best, windows, hits, rows;
+  let passes, best, windows, hits, rows, since = '', allModes = false;
   // 통과 규칙이 바뀌기 전 저장본(PASS_VERSION 이 다름)은 버리고 반 전체를 다시 읽는다
   if (saved && saved.v === PASS_VERSION && typeof saved.through === 'string'
     && isObj(saved.passes) && isObj(saved.best) && isObj(saved.windows) && isObj(saved.hits)) {
     ({ passes, best, windows, hits } = saved);
-    rows = await client.fetchResultsSince(saved.through);
+    since = saved.through;
+    rows = await client.fetchResultsSince(since);
+    allModes = true;
   } else {
     passes = {}; best = {}; windows = {}; hits = {};
     rows = await client.fetchChallengeHistory();
   }
   // 오늘 기록은 넣지 않는다: 이어 붙이는 창이 다음에 오늘 것을 또 넣으면 틀어진다 (판정은 어제까지만 씀)
+  const todayRows = allModes ? rows.filter((r) => r.dateKey === today) : null;
   rows = rows.filter((r) => r.dateKey && r.dateKey < today);
-  addProgress(passes, windows, rows, hits);
-  addBest(best, rows);
+  // through(굳힌 날) 까지만 저장본에 넣는다. 그 뒤 최근 RECENT_DAYS 일은 늦게 올라오는 기록이 있어 매번 다시 센다
+  const settle = settleDay(today);
+  const through = since > settle ? since : settle;
+  const old = rows.filter((r) => r.dateKey <= through);
+  const recent = rows.filter((r) => r.dateKey > through);
+  addProgress(passes, windows, old, hits);
+  addBest(best, old);
   if (passCache) {
-    await passCache.save(client.code, { v: PASS_VERSION, through: addDays(today, -1), passes, best, windows, hits }).catch(() => {});
+    await passCache.save(client.code, { v: PASS_VERSION, through, passes, best, windows, hits }).catch(() => {});
   }
-  return { passes, best, hits, windows };
+  // 최근 날짜는 저장본을 건드리지 않게 복사본에 더한다
+  const copy = (x) => JSON.parse(JSON.stringify(x));
+  const now = { passes: copy(passes), best: copy(best), windows: copy(windows), hits: copy(hits) };
+  addProgress(now.passes, now.windows, recent, now.hits);
+  addBest(now.best, recent);
+  // recentRows: 최근 날짜의 모든 기록(연습 포함) — 날짜별 '했다'를 다시 셀 때 또 읽지 않게. 반 전체를 처음 읽은 때는 도전 기록뿐이라 null
+  // todayRows: 오늘 기록 (저장본에서 이어 읽은 때만. 아니면 null)
+  return { ...now, through, recentRows: allModes ? recent : null, todayRows };
 }
 
 const isStrict = (day) => day >= STRICT_FROM;
@@ -755,17 +789,18 @@ export async function buildReport({
     saved = await baseCache.load(client.code).catch(() => null);
     // 통과 기록이 없던 예전 형식이면 새로 받는다
     if (saved?.date !== today || !Array.isArray(saved.prevRows) || !isObj(saved.passes) || !isObj(saved.best)
-      || saved.v !== PASS_VERSION || !isObj(saved.hits) || !isObj(saved.cls?.basicStart)) saved = null;
+      || saved.v !== PASS_VERSION || !isObj(saved.hits) || !isObj(saved.windows) || !isObj(saved.cls?.basicStart)) saved = null;
   }
-  let cls, students, passes, best, hits;
+  let cls, students, passes, best, hits, windows, recentRows = null, recentThrough = '';
   if (saved) {
-    ({ cls, students, passes, best, hits } = saved);
+    ({ cls, students, passes, best, hits, windows } = saved);
   } else {
     let history;
     [cls, students, history] = await Promise.all([
       client.fetchClass(), client.fetchStudents(), loadPasses(client, passCache, today),
     ]);
-    ({ passes, best, hits } = history);
+    ({ passes, best, hits, windows, recentRows } = history);
+    recentThrough = history.through;
   }
   const cal = new SchoolCalendar([...offDays, ...cls.offDays]);
   const prev = cal.prevSchoolDay(today);
@@ -780,7 +815,7 @@ export async function buildReport({
   }
   if (baseCache && !(saved && saved.prev === prev)) {
     await baseCache.save(client.code, {
-      v: PASS_VERSION, date: today, cls, students, passes, best, hits, prev, prevRows, accessed: [...accessed],
+      v: PASS_VERSION, date: today, cls, students, passes, best, hits, windows, prev, prevRows, accessed: [...accessed],
     }).catch(() => {});
   }
   const withRecord = new Set(prevRows.map((r) => r.no));
@@ -829,9 +864,18 @@ export async function buildReport({
   const doneByDay = new Map([[prev, done]]);
   const known = dayCache ? await dayCache.load(client.code) : {};
   if (known.rule !== DONE_RULE) { // 예전 기준으로 저장한 새 기준 날짜는 버리고 다시 센다
-    const from = known.rule === PREV_DONE_RULE_2 ? TRACKS_FROM : known.rule === PREV_DONE_RULE ? RECHECK_FROM : STRICT_FROM;
+    const from = known.rule === PREV_DONE_RULE_3 ? LATE_FROM : known.rule === PREV_DONE_RULE_2 ? TRACKS_FROM
+      : known.rule === PREV_DONE_RULE ? RECHECK_FROM : STRICT_FROM;
     for (const d of Object.keys(known)) if (d >= from) delete known[d];
   }
+  // 최근 RECENT_DAYS 일은 늦게 올라온 기록이 있을 수 있어, 오늘 센 것이 아니면 다시 센다
+  if (known.checkedOn !== today) {
+    const settle = settleDay(today);
+    for (const d of Object.keys(known)) if (d > settle && Array.isArray(known[d])) delete known[d];
+  }
+  const recentByDay = new Map();
+  for (const r of recentRows || []) (recentByDay.get(r.dateKey) || recentByDay.set(r.dateKey, []).get(r.dateKey)).push(r);
+  const recentFrom = recentRows ? addDays(recentThrough, 1) : '';
   const todo = days.filter((d) => d !== prev && !doneByDay.has(d));
   const fromCache = todo.filter((d) => Array.isArray(known[d]));
   for (const d of fromCache) doneByDay.set(d, new Set(known[d]));
@@ -839,14 +883,19 @@ export async function buildReport({
   const fresh = {};
   for (let i = 0; i < toFetch.length; i += 5) { // 5일씩 묶어서 동시에
     await Promise.all(toFetch.slice(i, i + 5).map(async (d) => {
-      const [rows, acc] = await Promise.all([client.fetchDayResults(d), isStrict(d) ? new Set() : client.fetchAccessed(d)]);
+      // 최근 날짜는 통과 기록을 셀 때 읽은 기록을 다시 쓴다 (분수 연산 마스터 읽기 절약)
+      const reuse = recentFrom && d >= recentFrom && isStrict(d);
+      const [rows, acc] = await Promise.all([reuse ? (recentByDay.get(d) || []) : client.fetchDayResults(d),
+        isStrict(d) ? new Set() : client.fetchAccessed(d)]);
       const set = judgeDay(d, rows, acc, passes, best, hits, basicStart).done;
       doneByDay.set(d, set);
       fresh[d] = [...set];
     }));
   }
   if (!Array.isArray(known[prev]) && days.includes(prev)) fresh[prev] = [...done]; // 이전 등교일은 이미 끝난 날
-  if (dayCache && Object.keys(fresh).length) await dayCache.save(client.code, { ...known, ...fresh, rule: DONE_RULE });
+  if (dayCache && (Object.keys(fresh).length || known.checkedOn !== today)) {
+    await dayCache.save(client.code, { ...known, ...fresh, rule: DONE_RULE, checkedOn: today });
+  }
 
   const counts = {};
   for (const s of counted) {
@@ -915,28 +964,19 @@ export async function buildTodayReport({
   if (!classCode) throw new MathError('nocode', '우리 반 탭에서 수학 반 코드를 먼저 적어 주세요', 400);
   const client = new MathPracticeClient(classCode, { fetchImpl, base });
   const today = todayKST(now);
-  const yesterday = addDays(today, -1);
 
   let saved = baseCache ? await baseCache.load(client.code).catch(() => null) : null;
-  if (saved?.date !== today || saved.v !== PASS_VERSION || !isObj(saved.passes) || !isObj(saved.hits)
-    || !isObj(saved.cls?.basicStart) || !Array.isArray(saved.students)) saved = null;
-  let cls, students, passes, hits, windows;
-  let rows;
-  if (saved) {
-    ({ cls, students, passes, hits } = saved);
-    const [pass, todayRows] = await Promise.all([
-      passCache ? passCache.load(client.code).catch(() => null) : null, client.fetchDayResults(today),
-    ]);
-    // 창은 baseCache 와 같은 날(어제)까지 넣은 것이어야 오늘 기록을 이어 붙일 수 있다. 아니면 오늘 몫만으로 센다
-    windows = pass?.v === PASS_VERSION && pass.through === yesterday && isObj(pass.windows) ? pass.windows : {};
-    rows = todayRows;
-  } else {
-    let history;
-    [cls, students, history, rows] = await Promise.all([
-      client.fetchClass(), client.fetchStudents(), loadPasses(client, passCache, today), client.fetchDayResults(today),
-    ]);
-    ({ passes, hits, windows } = history);
-  }
+  if (saved?.date !== today || saved.v !== PASS_VERSION || !isObj(saved.cls?.basicStart) || !Array.isArray(saved.students)) saved = null;
+  // 반 정보·명단은 오늘 받아 둔 것을 쓴다. 통과 기록은 아침 뒤에 늦게 올라온 기록이 있을 수 있어 매번 최근 날짜를 다시 읽는다
+  //   (저장본이 있으면 굳힌 날 다음부터 오늘까지 한 번에 읽고, 그 안의 오늘 기록을 쓴다)
+  const [got, history] = await Promise.all([
+    saved ? { cls: saved.cls, students: saved.students } : Promise.all([client.fetchClass(), client.fetchStudents()])
+      .then(([c, s]) => ({ cls: c, students: s })),
+    loadPasses(client, passCache, today),
+  ]);
+  const { cls, students } = got;
+  const { passes, hits, windows } = history;
+  let rows = history.todayRows || await client.fetchDayResults(today);
   rows = rows.filter((r) => r.dateKey === today);
   const basicStart = cls.basicStart || {};
 
